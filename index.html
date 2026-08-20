@@ -238,7 +238,7 @@ td:first-child,th:first-child{font-family:var(--body)}
               <button class="btn ghost" id="spanAuto" type="button">Slut = start + printtid</button>
             </div>
           </div>
-          <p class="hint-sm" style="margin:8px 0 0">Strømmen beregnes kvarter for kvarter med den faktiske spotpris i tidsrummet. Morgendagens priser offentliggøres ca. kl. 13 – timer uden kendt pris bruger gennemsnittet af de kendte.</p>
+          <p class="hint-sm" style="margin:8px 0 0">Strømmen beregnes interval for interval med den faktiske spotpris i tidsrummet. Tidsrum på op til 31 dage hentes automatisk – timer uden tilgængelig pris bruger et tidsvægtet gennemsnit af de kendte.</p>
         </div>
       </section>
 
@@ -250,8 +250,13 @@ td:first-child,th:first-child{font-family:var(--body)}
             <select id="platformSel"></select>
           </div>
         </div>
+        <label class="checkboxline" style="margin-top:14px">
+          <input type="checkbox" id="saleVatOn">
+          Læg 25 % salgsmoms på kundeprisen
+        </label>
+        <p class="hint-sm" style="margin:6px 0 0 25px">Brug virksomhedens reelle omkostninger efter eventuelt momsfradrag som kostpriser.</p>
         <div style="margin-top:16px">
-          <label style="font-size:12px;font-weight:600;letter-spacing:.03em;color:var(--muted);text-transform:uppercase">Avance (fortjeneste i %)</label>
+          <label style="font-size:12px;font-weight:600;letter-spacing:.03em;color:var(--muted);text-transform:uppercase">Fortjenestetillæg på kostpris (%)</label>
           <div class="marginrow" style="margin-top:6px">
             <input type="range" id="marginRange" min="0" max="200" step="5" value="40">
             <input type="number" class="mval" id="marginNum" min="0" max="500" step="1" value="40"><span style="font-family:var(--mono)">%</span>
@@ -385,7 +390,7 @@ td:first-child,th:first-child{font-family:var(--body)}
           <option value="manual">Manuel procent</option>
         </select>
       </div>
-      <div class="field" id="failManualWrap"><label for="failManual">Fejlrate (%)</label><input id="failManual" type="number" min="0" max="100" step="1"></div>
+      <div class="field" id="failManualWrap"><label for="failManual">Fejlrate pr. forsøg (%)</label><input id="failManual" type="number" min="0" max="95" step="1"></div>
     </div>
     <div style="overflow-x:auto;margin-top:14px">
       <table id="platformTable">
@@ -446,6 +451,7 @@ function seed(){
       manualElOn: false, manualElPrice: 2.0,
       wage: 150, failMode: 'auto', failManual: 5,
       currency: 'DKK', margin: 40,
+      saleVatOn: false, saleVatRate: 25,
     },
     el: null,        // { spotDkkMwh, slotDK, fetchedAt, area }
     fx: null,        // { EUR, USD, date }
@@ -458,12 +464,17 @@ try { state = JSON.parse(localStorage.getItem(LS_KEY)) || seed(); }
 catch(e){ state = seed(); }
 if (!state.settings) state = seed();
 state.settings = Object.assign(seed().settings, state.settings); // udfyld nye nøgler med standarder
+state.settings.failManual = Math.min(95, Math.max(0, Number(state.settings.failManual) || 0));
 // engangs-migrering: X2D-forbrug rettet til officiel steady-state værdi (PLA)
 state.printers.forEach(p => { if (p.name === 'Bambu Lab X2D' && p.watt === 200) p.watt = 250; });
 // engangs-migrering: gamle el-data (Energinet-format, DKK/MWh) ryddes – ny kilde bruger kr/kWh
 if (state.el && state.el.spotKrh === undefined){ state.el = null; state.elSeries = []; }
 // engangs-migrering: printere får tilstand (ny/brugt) og timer ved køb
 state.printers.forEach(p => { if (p.used === undefined){ p.used = false; p.hoursAtPurchase = 0; } });
+// engangs-migrering: historik får særskilt salgsmoms, så omsætning kan vises korrekt
+state.history.forEach(h => { if (h.salesVat === undefined) h.salesVat = 0; });
+// gamle spotserier havde intet prisområde og kan derfor ikke genbruges sikkert
+if (state.elSeries && state.elSeriesArea !== state.settings.area){ state.elSeries = []; }
 save();
 function save(){ localStorage.setItem(LS_KEY, JSON.stringify(state)); }
 
@@ -490,41 +501,60 @@ function toast(msg, isErr){
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /* ---------- el-pris (elprisenligenu.dk – Nord Pool day-ahead spotpriser, kr/kWh) ---------- */
-let elSeries = []; // [{t: ms, tEnd: ms, p: kr/kWh spot}] – dækker i dag (+ i morgen efter ca. kl. 13)
+let elSeries = []; // [{t: ms, tEnd: ms, p: kr/kWh spot}] – cache for det valgte prisområde
 function elTotalKrh(){
   const s = state.settings;
   if (s.manualElOn) return { price: s.manualElPrice, label: 'manuel' };
-  if (!state.el) return { price: s.manualElPrice, label: 'ukendt (manuel standard)' };
+  if (!state.el || state.el.area !== s.area) return { price: s.manualElPrice, label: 'ukendt (manuel standard)' };
   const p = (state.el.spotKrh + s.tillæg) * (s.vat ? 1.25 : 1);
   return { price: p, label: null };
 }
-async function fetchSpot(silent){
+function priceDays(startMs, endMs){
+  const days = [];
+  const hasRange = Number.isFinite(startMs) && Number.isFinite(endMs) && endMs > startMs;
+  const first = hasRange ? new Date(startMs) : new Date();
+  const last = hasRange ? new Date(endMs - 1) : new Date(first.getFullYear(), first.getMonth(), first.getDate() + 1);
+  let d = new Date(first.getFullYear(), first.getMonth(), first.getDate());
+  const lastDay = new Date(last.getFullYear(), last.getMonth(), last.getDate());
+  while (d <= lastDay && days.length < 31){
+    days.push(new Date(d));
+    d.setDate(d.getDate() + 1);
+  }
+  return days;
+}
+function mergeElSeries(existing, incoming){
+  const bySlot = new Map();
+  for (const rec of [...existing, ...incoming]) bySlot.set(`${rec.t}:${rec.tEnd}`, rec);
+  return [...bySlot.values()].sort((a, b) => a.t - b.t);
+}
+async function fetchSpot(silent, startMs, endMs){
   const s = state.settings;
+  const isRangeFetch = Number.isFinite(startMs) && Number.isFinite(endMs) && endMs > startMs;
   const pad = n => String(n).padStart(2,'0');
   const dayUrl = d => `https://www.elprisenligenu.dk/api/v1/prices/${d.getFullYear()}/${pad(d.getMonth()+1)}-${pad(d.getDate())}_${s.area}.json`;
   try {
     const recs = [];
-    const today = new Date();
-    for (const d of [today, new Date(today.getTime() + 864e5)]){
+    for (const d of priceDays(startMs, endMs)){
       const r = await fetch(dayUrl(d));
-      if (r.status === 404) continue; // morgendagens priser er ikke offentliggjort endnu
+      if (r.status === 404) continue;
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const arr = await r.json();
       for (const x of arr) recs.push({ t: Date.parse(x.time_start), tEnd: Date.parse(x.time_end), p: x.DKK_per_kWh });
     }
     if (!recs.length) throw new Error('Ingen priser modtaget');
-    recs.sort((a, b) => a.t - b.t);
-    const now = Date.now();
-    let current = null;
-    for (const rec of recs){ if (rec.t <= now) current = rec; else break; }
-    if (!current) current = recs[0];
-    state.el = { spotKrh: current.p, slotStart: current.t, slotEnd: current.tEnd, fetchedAt: new Date().toISOString(), area: s.area };
-    elSeries = recs;
+    const existing = state.elSeriesArea === s.area ? elSeries : [];
+    elSeries = mergeElSeries(existing, recs);
     state.elSeries = elSeries;
+    state.elSeriesArea = s.area;
+    const now = Date.now();
+    const current = elSeries.find(rec => rec.t <= now && now < rec.tEnd);
+    if (current) state.el = { spotKrh: current.p, slotStart: current.t, slotEnd: current.tEnd, fetchedAt: new Date().toISOString(), area: s.area };
     save(); renderElChip(); calculate();
+    return true;
   } catch(e){
-    renderElChip(true);
+    if (!isRangeFetch) renderElChip(true);
     if (!silent) toast('Kunne ikke hente spotpris – bruger ' + (state.el ? 'seneste gemte pris' : 'manuel pris'), true);
+    return false;
   }
 }
 function renderElChip(stale){
@@ -534,7 +564,7 @@ function renderElChip(stale){
     chip.classList.remove('stale'); return;
   }
   const { price } = elTotalKrh();
-  if (state.el){
+  if (state.el && state.el.area === s.area){
     const slot = state.el.slotStart != null ? new Date(state.el.slotStart).toLocaleTimeString('da-DK', { hour: '2-digit', minute: '2-digit' }) : '';
     txt.textContent = `Strøm: ${price.toLocaleString('da-DK',{minimumFractionDigits:2,maximumFractionDigits:2})} kr/kWh · ${state.el.area} kl. ${slot}`;
   } else {
@@ -543,21 +573,22 @@ function renderElChip(stale){
   chip.classList.toggle('stale', !!stale);
 }
 
-/* Præcis strømpris for et konkret tidsrum: læg hvert kvarters faktiske pris sammen.
+/* Præcis strømpris for et konkret tidsrum: læg hvert prisintervals faktiske pris sammen.
    Timer uden offentliggjort pris bruger gennemsnittet af de kendte timer. */
 function spanElCost(watt, startMs, endMs){
   const s = state.settings;
   const kwh = (watt / 1000) * ((endMs - startMs) / 36e5);
   if (!elSeries.length) return null;
-  let cost = 0, coveredMs = 0, priceSum = 0, priceN = 0;
+  let cost = 0, coveredMs = 0, weightedPriceMs = 0;
   for (const rec of elSeries){
     const a = Math.max(rec.t, startMs), b = Math.min(rec.tEnd, endMs);
     if (b <= a) continue;
     const krKwh = (rec.p + s.tillæg) * (s.vat ? 1.25 : 1);
     cost += (watt / 1000) * ((b - a) / 36e5) * krKwh;
-    coveredMs += b - a; priceSum += krKwh; priceN++;
+    coveredMs += b - a;
+    weightedPriceMs += krKwh * (b - a);
   }
-  const avgKnown = priceN ? priceSum / priceN : elTotalKrh().price;
+  const avgKnown = coveredMs ? weightedPriceMs / coveredMs : elTotalKrh().price;
   const missingMs = Math.max(0, (endMs - startMs) - coveredMs);
   if (missingMs > 0) cost += (watt / 1000) * (missingMs / 36e5) * avgKnown;
   return { cost, kwh, avg: kwh > 0 ? cost / kwh : 0, missingHrs: missingMs / 36e5 };
@@ -580,7 +611,7 @@ async function fetchFx(){
 /* ---------- fejlrate ---------- */
 function failRate(){
   const s = state.settings;
-  if (s.failMode === 'manual') return (s.failManual || 0) / 100;
+  if (s.failMode === 'manual') return Math.min(95, s.failManual || 0) / 100;
   const h = state.history;
   if (h.length >= 5){
     const failed = h.filter(x => x.failed).length;
@@ -590,7 +621,7 @@ function failRate(){
 }
 function failRateLabel(){
   const s = state.settings;
-  if (s.failMode === 'manual') return s.failManual + ' % (manuelt)';
+  if (s.failMode === 'manual') return (failRate()*100).toLocaleString('da-DK',{maximumFractionDigits:1}) + ' % (manuelt)';
   if (state.history.length >= 5) return (failRate()*100).toLocaleString('da-DK',{maximumFractionDigits:1}) + ' % (fra historik)';
   return '5 % (standard)';
 }
@@ -647,7 +678,28 @@ function updatePartsTotal(){
 
 /* ---------- beregning ---------- */
 // Slid-takst: købspris fordelt på restlevetiden (ved brugtkøb fratrækkes timer ved køb)
-function wearRate(p){ return p.cost / Math.max(1, (p.lifeHours || 1) - (p.hoursAtPurchase || 0)); }
+function remainingLifeHours(p){
+  if (!p) return 0;
+  return (p.lifeHours || 0) - (p.used ? (p.hoursAtPurchase || 0) : 0);
+}
+function printerInputError(p){
+  if (!p) return 'Vælg en printer.';
+  if (!(p.lifeHours > 0)) return 'Printerens levetid skal være større end 0 timer.';
+  if (remainingLifeHours(p) <= 0) return 'Printerens levetid skal være større end timerne ved køb.';
+  return null;
+}
+function wearRate(p){
+  const remaining = remainingLifeHours(p);
+  return remaining > 0 ? p.cost / remaining : 0;
+}
+function priceForCost(cost, markupPct, feePct, vatRate){
+  const retainedShare = 1 / (1 + vatRate) - feePct;
+  if (!(retainedShare > 0)) return null;
+  const price = cost * (1 + markupPct / 100) / retainedShare;
+  const salesVat = vatRate > 0 ? price - price / (1 + vatRate) : 0;
+  const feeAmt = price * feePct;
+  return { price, salesVat, feeAmt, profit: price - salesVat - feeAmt - cost };
+}
 function getInputs(){
   return {
     name: $('printName').value.trim(),
@@ -672,6 +724,7 @@ function getInputs(){
 function compute(inp){
   const s = state.settings;
   const fr = failRate();
+  const inputError = printerInputError(inp.printer);
   const kgPrice = f => f ? f.priceDkk / (f.spoolG / 1000) : 0;
   const partRows = inp.parts.map(p => Object.assign({}, p, { cost: p.grams / 1000 * kgPrice(p.filament) }));
   const material = partRows.reduce((a, p) => a + p.cost, 0);
@@ -689,20 +742,33 @@ function compute(inp){
     } else {
       const sp = spanElCost(watt, inp.spanStart, inp.spanEnd);
       if (sp){ electricity = sp.cost; elPrice = sp.avg; elSpan = { avg: sp.avg, missingHrs: sp.missingHrs }; }
+      else {
+        electricity = kwh * elPrice;
+        elSpan = { avg: elPrice, missingHrs: (inp.spanEnd - inp.spanStart) / 36e5 };
+      }
     }
   }
-  const spill = (material + electricity) * fr;
-  const wear = inp.printer ? totalHours * wearRate(inp.printer) : 0;
+  const wear = inputError ? 0 : totalHours * wearRate(inp.printer);
+  const retryFactor = fr < 1 ? fr / (1 - fr) : null;
+  const failureBase = material + electricity + wear;
+  const spill = retryFactor === null ? 0 : failureBase * retryFactor;
   const labor = inp.wageOn ? (inp.laborMin / 60) * s.wage : 0;
   const ship = inp.shipOn ? inp.shipPost + inp.shipPack : 0;
-  const cost = material + electricity + spill + wear + labor + ship;
+  const baseCost = material + electricity + wear + labor + ship;
+  const failedCost = material + electricity + wear + labor;
+  const cost = baseCost + spill;
   const feePct = inp.platform ? inp.platform.fee / 100 : 0;
-  const price = feePct < 0.95 ? cost * (1 + inp.margin / 100) / (1 - feePct) : cost;
-  const feeAmt = price * feePct;
-  const profit = price - feeAmt - cost;
+  const vatRate = s.saleVatOn ? (s.saleVatRate || 25) / 100 : 0;
+  const priced = fr < 1 && !inputError ? priceForCost(cost, inp.margin, feePct, vatRate) : null;
+  const price = priced ? priced.price : 0;
+  const feeAmt = priced ? priced.feeAmt : 0;
+  const salesVat = priced ? priced.salesVat : 0;
+  const profit = priced ? priced.profit : 0;
   const costNoLabor = cost - labor;
-  const priceNoLabor = feePct < 0.95 ? costNoLabor * (1 + inp.margin / 100) / (1 - feePct) : costNoLabor;
-  return { partRows, material, totalHours, electricity, spill, wear, labor, ship, cost, price, feeAmt, profit, kwh, elPrice, elSpan, fr, costNoLabor, priceNoLabor };
+  const pricedNoLabor = fr < 1 && !inputError ? priceForCost(costNoLabor, inp.margin, feePct, vatRate) : null;
+  const priceNoLabor = pricedNoLabor ? pricedNoLabor.price : 0;
+  const pricingError = inputError || (fr >= 1 ? 'Fejlraten er 100 %. En salgspris kan ikke beregnes, før mindst ét print er lykkedes.' : null) || (!priced ? 'Gebyr og moms efterlader ingen indtjening til at dække kostprisen.' : null);
+  return { partRows, material, totalHours, electricity, spill, wear, labor, ship, baseCost, failedCost, cost, price, feeAmt, salesVat, profit, kwh, elPrice, elSpan, fr, retryFactor, costNoLabor, priceNoLabor, inputError, pricingError };
 }
 
 /* ---------- kvittering ---------- */
@@ -730,27 +796,38 @@ function calculate(){
     const t = ms => new Date(ms).toLocaleTimeString('da-DK', { hour: '2-digit', minute: '2-digit' });
     h += line(`Strøm · ${c.kwh.toLocaleString('da-DK',{maximumFractionDigits:2})} kWh · kl. ${t(inp.spanStart)}–${t(inp.spanEnd)}`, fmt(c.electricity));
     h += line(`Snitpris i tidsrummet ${c.elSpan.avg.toLocaleString('da-DK',{minimumFractionDigits:2})} kr/kWh`, '', 'sub');
-    if (c.elSpan.missingHrs > 0.25) h += line(`${c.elSpan.missingHrs.toLocaleString('da-DK',{maximumFractionDigits:1})} t uden kendt pris – gennemsnit brugt`, '', 'warn');
+    if (c.elSpan.missingHrs > 0.01) h += line(`${c.elSpan.missingHrs.toLocaleString('da-DK',{maximumFractionDigits:1})} t uden tilgængelig pris – gennemsnit brugt`, '', 'warn');
   } else {
     h += line(`Strøm · ${c.kwh.toLocaleString('da-DK',{maximumFractionDigits:2})} kWh à ${c.elPrice.toLocaleString('da-DK',{minimumFractionDigits:2})} kr`, fmt(c.electricity));
   }
-  h += line(`Fejltilæg · ${failRateLabel()}`, fmt(c.spill));
+  h += line(`Fejlreserve · ${failRateLabel()}`, fmt(c.spill));
   h += line(`Slid på printer`, fmt(c.wear));
   if (inp.shipOn) h += line('Fragt &amp; emballage', fmt(c.ship));
   if (inp.wageOn) h += line(`Arbejde · ${inp.laborMin} min`, fmt(c.labor));
   h += line('Kostpris i alt', fmt(c.cost), 'total');
-  if (inp.platform && inp.platform.fee > 0) h += line(`${esc(inp.platform.name)}-gebyr · ${inp.platform.fee} %`, '− ' + fmt(c.feeAmt));
-  h += line('Din fortjeneste', fmt(c.profit));
-  if (c.totalHours > 0) h += line('Fortjeneste pr. printtime', fmt(c.profit / c.totalHours), 'sub');
-  if (inp.wageOn) h += line(`Uden timeløn: kostpris ${fmt(c.costNoLabor)} · pris ${fmt(c.priceNoLabor)}`, '', 'alt');
+  if (c.pricingError){
+    h += line(c.pricingError, '', 'warn');
+  } else {
+    if (inp.platform && inp.platform.fee > 0) h += line(`${esc(inp.platform.name)}-gebyr · ${inp.platform.fee} %`, '− ' + fmt(c.feeAmt));
+    if (c.salesVat > 0) h += line(`Salgsmoms · ${state.settings.saleVatRate} %`, '− ' + fmt(c.salesVat));
+    h += line('Din fortjeneste', fmt(c.profit));
+    if (c.totalHours > 0) h += line('Fortjeneste pr. printtime', fmt(c.profit / c.totalHours), 'sub');
+    if (inp.wageOn) h += line(`Uden timeløn: kostpris ${fmt(c.costNoLabor)} · pris ${fmt(c.priceNoLabor)}`, '', 'alt');
+  }
 
-  const nice = Math.ceil(c.price / 5) * 5;
-  const niceTxt = nice !== Math.round(c.price) && nice > c.price ? ` · pæn pris: ${fmt(nice)}` : '';
+  const nice = c.pricingError ? 0 : Math.ceil(c.price / 5) * 5;
+  const niceTxt = nice > c.price ? ` · pæn pris: ${fmt(nice)}` : '';
   h += `<div class="rline grand"><span class="lbl">ANBEFALET PRIS</span><span class="dots"></span><span class="val" id="grandVal"></span></div>`;
-  h += line(`Avance ${inp.margin} %${niceTxt}`, '', 'sub');
+  h += line(`Fortjenestetillæg ${inp.margin} %${niceTxt}`, '', 'sub');
   $('receiptLines').innerHTML = h;
 
   const gv = $('grandVal');
+  if (c.pricingError){
+    gv.textContent = '–';
+    lastPrice = null;
+    renderMarginHints(inp, c);
+    return;
+  }
   if (reducedMotion || lastPrice === null){
     gv.textContent = fmt(c.price);
   } else {
@@ -773,20 +850,21 @@ function renderMarginHints(inp, c){
   box.innerHTML = '';
   [20, 40, 75].forEach(m => {
     const feePct = inp.platform ? inp.platform.fee / 100 : 0;
-    const p = feePct < 0.95 ? c.cost * (1 + m / 100) / (1 - feePct) : c.cost;
+    const vatRate = state.settings.saleVatOn ? (state.settings.saleVatRate || 25) / 100 : 0;
+    const priced = priceForCost(c.cost, m, feePct, vatRate);
     const b = document.createElement('button');
     b.type = 'button'; b.className = 'mhint';
-    b.textContent = `${m} % → ${fmt(p)}`;
+    b.textContent = `${m} % → ${priced && !c.pricingError ? fmt(priced.price) : '–'}`;
     b.onclick = () => { $('marginRange').value = m; $('marginNum').value = m; state.settings.margin = m; save(); calculate(); };
     box.appendChild(b);
   });
   const cost = c.cost;
   let tip;
-  if (cost < 30) tip = 'Tip: Små print under 30 kr sælges typisk med 60–100 % avance – køber betaler for det færdige produkt, ikke filamentet.';
-  else if (cost < 150) tip = 'Tip: Mellemstore print sælges typisk med 30–60 % avance. Tjek hvad lignende print går for på DBA og Vinted.';
-  else tip = 'Tip: Ved dyre print er 20–40 % avance almindeligt – en høj procent kan gøre prisen svær at sælge.';
-  if (inp.wageOn && c.totalHours > 0 && c.profit / c.totalHours < state.settings.wage && inp.margin <= 40)
-    tip += ' Din fortjeneste pr. printtime er lavere end din timeløn – overvej en højere avance.';
+  if (cost < 30) tip = 'Tip: Små print under 30 kr sælges typisk med 60–100 % fortjenestetillæg – køber betaler for det færdige produkt, ikke filamentet.';
+  else if (cost < 150) tip = 'Tip: Mellemstore print sælges typisk med 30–60 % fortjenestetillæg. Tjek hvad lignende print går for på DBA og Vinted.';
+  else tip = 'Tip: Ved dyre print er 20–40 % fortjenestetillæg almindeligt – en høj procent kan gøre prisen svær at sælge.';
+  if (!c.pricingError && inp.wageOn && c.totalHours > 0 && c.profit / c.totalHours < state.settings.wage && inp.margin <= 40)
+    tip += ' Din fortjeneste pr. printtime er lavere end din timeløn – overvej et højere fortjenestetillæg.';
   $('marginTip').textContent = tip;
 }
 
@@ -796,14 +874,18 @@ function saveToHistory(failed){
   const c = compute(inp);
   const totalGrams = inp.parts.reduce((a, p) => a + p.grams, 0);
   if (totalGrams <= 0 && c.totalHours <= 0){ toast('Udfyld gram og tid før du gemmer', true); return; }
+  if (c.inputError){ toast(c.inputError, true); return; }
+  if (!failed && c.pricingError){ toast(c.pricingError, true); return; }
   const types = [...new Set(inp.parts.map(p => p.filament && p.filament.type).filter(Boolean))];
+  const historyCost = failed ? c.failedCost : c.cost;
   state.history.unshift({
     id: uid(), date: new Date().toISOString(), name: inp.name || '(uden navn)',
     grams: totalGrams, hours: c.totalHours,
     filament: types.join(' + ') || '–', printer: inp.printer.name,
     parts: inp.parts.map(p => ({ type: p.filament ? p.filament.type : '?', grams: p.grams, hours: Math.round(p.hours * 100) / 100 })),
-    cost: c.cost, price: failed ? 0 : c.price, fee: failed ? 0 : c.feeAmt,
-    profit: failed ? -c.cost : c.profit, failed: !!failed,
+    cost: historyCost, price: failed ? 0 : c.price, fee: failed ? 0 : c.feeAmt,
+    salesVat: failed ? 0 : c.salesVat,
+    profit: failed ? -historyCost : c.profit, failed: !!failed,
   });
   save(); renderHistory(); calculate();
   toast(failed ? 'Gemt som fejlet print – spildet tæller med i fejlraten' : 'Gemt i historik');
@@ -834,22 +916,24 @@ function renderStats(){
   const h = state.history;
   const ok = h.filter(x => !x.failed);
   const failed = h.filter(x => x.failed);
-  const rev = ok.reduce((a, x) => a + x.price - x.fee, 0);
+  const rev = ok.reduce((a, x) => a + x.price - (x.salesVat || 0), 0);
+  const fees = ok.reduce((a, x) => a + (x.fee || 0), 0);
   const prof = h.reduce((a, x) => a + x.profit, 0);
   const rate = h.length ? (failed.length / h.length * 100) : 0;
   $('statsRow').innerHTML =
     `<div class="stat"><div class="k">Print i alt</div><div class="v">${h.length}</div></div>` +
     `<div class="stat"><div class="k">Fejlrate</div><div class="v">${rate.toLocaleString('da-DK',{maximumFractionDigits:1})} %</div></div>` +
-    `<div class="stat"><div class="k">Omsætning</div><div class="v">${fmt(rev)}</div></div>` +
+    `<div class="stat"><div class="k">Omsætning ekskl. salgsmoms</div><div class="v">${fmt(rev)}</div></div>` +
+    `<div class="stat"><div class="k">Platformgebyrer</div><div class="v">${fmt(fees)}</div></div>` +
     `<div class="stat"><div class="k">Fortjeneste</div><div class="v">${fmt(prof)}</div></div>` +
     `<div class="stat"><div class="k">Tab på fejlede print</div><div class="v">${fmt(failed.reduce((a,x)=>a+x.cost,0))}</div></div>`;
 }
 function exportCsv(){
   if (!state.history.length){ toast('Historikken er tom', true); return; }
-  const rows = [['Dato','Navn','Gram','Timer','Filament','Printer','Kostpris DKK','Pris DKK','Gebyr DKK','Fortjeneste DKK','Status']];
+  const rows = [['Dato','Navn','Gram','Timer','Filament','Printer','Kostpris DKK','Pris DKK','Salgsmoms DKK','Gebyr DKK','Fortjeneste DKK','Status']];
   for (const h of state.history)
     rows.push([h.date.slice(0,10), h.name, h.grams, h.hours.toFixed(2), h.filament, h.printer,
-      h.cost.toFixed(2), h.price.toFixed(2), h.fee.toFixed(2), h.profit.toFixed(2), h.failed ? 'Fejlet' : 'OK']);
+      h.cost.toFixed(2), h.price.toFixed(2), (h.salesVat || 0).toFixed(2), h.fee.toFixed(2), h.profit.toFixed(2), h.failed ? 'Fejlet' : 'OK']);
   const csv = rows.map(r => r.map(x => `"${String(x).replace(/"/g,'""')}"`).join(';')).join('\r\n');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }));
@@ -936,15 +1020,16 @@ function renderPrinterTable(){
   tb.innerHTML = '';
   for (const p of state.printers){
     const runHours = state.history.reduce((a, h) => a + (h.printer === p.name ? (h.hours || 0) : 0), 0);
+    const wearError = printerInputError(p);
     const tr = document.createElement('tr');
     tr.innerHTML =
       `<td><input value="${esc(p.name)}" data-p="${p.id}" data-k="name"></td>` +
       `<td style="width:80px"><input type="number" min="0" step="10" value="${p.watt}" data-p="${p.id}" data-k="watt"></td>` +
       `<td><select data-p="${p.id}" data-k="used"><option value="no"${p.used ? '' : ' selected'}>Ny</option><option value="yes"${p.used ? ' selected' : ''}>Brugt</option></select></td>` +
       `<td style="width:90px"><input type="number" min="0" step="100" value="${p.cost}" data-p="${p.id}" data-k="cost"></td>` +
-      `<td style="width:90px"><input type="number" min="0" step="10" value="${p.hoursAtPurchase || 0}" data-p="${p.id}" data-k="hoursAtPurchase"></td>` +
+      `<td style="width:90px"><input type="number" min="0" step="10" value="${p.hoursAtPurchase || 0}" data-p="${p.id}" data-k="hoursAtPurchase"${p.used ? '' : ' disabled'}></td>` +
       `<td style="width:100px"><input type="number" min="1" step="100" value="${p.lifeHours}" data-p="${p.id}" data-k="lifeHours"></td>` +
-      `<td>${wearRate(p).toLocaleString('da-DK',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>` +
+      `<td>${wearError ? '<span style="color:var(--orange)">Ugyldig</span>' : wearRate(p).toLocaleString('da-DK',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>` +
       `<td>${runHours.toLocaleString('da-DK',{maximumFractionDigits:1})} t</td>` +
       `<td><button class="rowbtn" data-del="${p.id}">slet</button></td>`;
     tb.appendChild(tr);
@@ -953,7 +1038,10 @@ function renderPrinterTable(){
     const p = state.printers.find(x => x.id === i.dataset.p);
     if (!p) return;
     if (i.dataset.k === 'name') p.name = i.value;
-    else if (i.dataset.k === 'used') p.used = i.value === 'yes';
+    else if (i.dataset.k === 'used'){
+      p.used = i.value === 'yes';
+      if (!p.used) p.hoursAtPurchase = 0;
+    }
     else p[i.dataset.k] = num(i.value);
     save(); renderPrinterTable(); renderSelects(); calculate();
   });
@@ -1003,14 +1091,22 @@ function loadSettingsForm(){
 }
 function bindSettings(){
   const s = state.settings;
-  $('areaSel').onchange = () => { s.area = $('areaSel').value; save(); fetchSpot(true); };
+  $('areaSel').onchange = () => {
+    s.area = $('areaSel').value;
+    state.el = null; state.elSeries = []; state.elSeriesArea = s.area; elSeries = [];
+    save(); renderElChip(); calculate(); fetchSpot(true); scheduleSpanPriceFetch();
+  };
   $('tillaeg').onchange = () => { s.tillæg = num($('tillaeg').value); save(); renderElChip(); calculate(); };
   $('vatOn').onchange = () => { s.vat = $('vatOn').checked; save(); renderElChip(); calculate(); };
-  $('manualElOn').onchange = () => { s.manualElOn = $('manualElOn').checked; $('manualElRow').hidden = !s.manualElOn; save(); renderElChip(); calculate(); };
+  $('manualElOn').onchange = () => { s.manualElOn = $('manualElOn').checked; $('manualElRow').hidden = !s.manualElOn; save(); renderElChip(); calculate(); scheduleSpanPriceFetch(); };
   $('manualElPrice').onchange = () => { s.manualElPrice = num($('manualElPrice').value); save(); renderElChip(); calculate(); };
   $('wageInput').onchange = () => { s.wage = num($('wageInput').value); $('wageLabel').textContent = s.wage; save(); calculate(); };
   $('failMode').onchange = () => { s.failMode = $('failMode').value; $('failManualWrap').style.visibility = s.failMode === 'manual' ? 'visible' : 'hidden'; save(); calculate(); };
-  $('failManual').onchange = () => { s.failManual = num($('failManual').value); save(); calculate(); };
+  $('failManual').onchange = () => {
+    s.failManual = Math.min(95, num($('failManual').value));
+    $('failManual').value = s.failManual;
+    save(); calculate();
+  };
   $('addPrinter').onclick = () => {
     const name = $('npName').value.trim();
     if (!name){ toast('Giv printeren et navn', true); return; }
@@ -1033,29 +1129,44 @@ function bindSettings(){
 }
 
 /* ---------- init ---------- */
+let spanFetchTimer = null;
+function scheduleSpanPriceFetch(){
+  clearTimeout(spanFetchTimer);
+  if (!$('spanOn').checked || state.settings.manualElOn) return;
+  const start = $('spanStart').value ? new Date($('spanStart').value).getTime() : null;
+  const end = $('spanEnd').value ? new Date($('spanEnd').value).getTime() : null;
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return;
+  spanFetchTimer = setTimeout(() => fetchSpot(true, start, end), 300);
+}
 function init(){
   elSeries = state.elSeries || [];
   renderSelects(); renderHistory(); renderElChip();
   loadSettingsForm(); bindSettings();
   $('currencySel').value = state.settings.currency;
+  $('saleVatOn').checked = state.settings.saleVatOn;
 
   const live = ['printName','laborMin','shipPost','shipPack','spanStart','spanEnd'];
   live.forEach(id => $(id).addEventListener('input', calculate));
+  ['spanStart','spanEnd'].forEach(id => $(id).addEventListener('input', scheduleSpanPriceFetch));
   ['printerSel','platformSel'].forEach(id => $(id).addEventListener('change', calculate));
   $('wageOn').addEventListener('change', () => { $('laborRow').style.opacity = $('wageOn').checked ? 1 : .45; calculate(); });
   $('shipOn').addEventListener('change', () => { $('shipRow').hidden = !$('shipOn').checked; calculate(); });
-  $('spanOn').addEventListener('change', () => { $('spanRow').hidden = !$('spanOn').checked; calculate(); });
+  $('spanOn').addEventListener('change', () => { $('spanRow').hidden = !$('spanOn').checked; calculate(); scheduleSpanPriceFetch(); });
   $('spanAuto').onclick = () => {
     const sv = $('spanStart').value;
     if (!sv){ toast('Vælg et starttidspunkt først', true); return; }
     const hours = parts.reduce((a, p) => a + p.hours + p.mins / 60, 0);
     if (hours <= 0){ toast('Udfyld printtid på pladerne først', true); return; }
     $('spanEnd').value = toLocalInput(new Date(sv).getTime() + hours * 36e5);
-    calculate();
+    calculate(); scheduleSpanPriceFetch();
   };
   $('marginRange').value = state.settings.margin; $('marginNum').value = state.settings.margin;
   $('marginRange').addEventListener('input', () => { $('marginNum').value = $('marginRange').value; state.settings.margin = num($('marginRange').value); save(); calculate(); });
   $('marginNum').addEventListener('input', () => { $('marginRange').value = Math.min(200, num($('marginNum').value)); state.settings.margin = num($('marginNum').value); save(); calculate(); });
+  $('saleVatOn').addEventListener('change', () => {
+    state.settings.saleVatOn = $('saleVatOn').checked;
+    save(); lastPrice = null; calculate();
+  });
 
   $('currencySel').addEventListener('change', () => {
     state.settings.currency = $('currencySel').value; save();
