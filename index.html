@@ -1,0 +1,1089 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PrintPris – 3D-print prisberegner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#E7E9E4; --panel:#F2F3EF; --paper:#FCFCF8;
+  --ink:#181B18; --muted:#5E635C; --line:#C7CBC2;
+  --green:#00793B; --green-soft:#DCEDE1;
+  --orange:#E8590C; --orange-soft:#FBE7DA;
+  --disp:'Space Grotesk',system-ui,sans-serif;
+  --body:'IBM Plex Sans',system-ui,sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,'Cascadia Mono',monospace;
+  --rad:10px;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.45;min-height:100vh}
+button{font:inherit;cursor:pointer}
+input,select{font:inherit;color:var(--ink)}
+:focus-visible{outline:2px solid var(--green);outline-offset:2px}
+
+/* ---------- header ---------- */
+.topbar{display:flex;align-items:center;gap:14px;padding:14px 22px;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap}
+.wordmark{font-family:var(--disp);font-weight:700;font-size:20px;letter-spacing:.02em}
+.wordmark em{font-style:normal;color:var(--green)}
+.elchip{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:12.5px;background:var(--paper);border:1px solid var(--line);border-radius:99px;padding:6px 12px;white-space:nowrap}
+.elchip .dot{width:8px;height:8px;border-radius:50%;background:var(--green);flex:none}
+.elchip.stale .dot{background:var(--orange)}
+.elchip button{border:0;background:none;color:var(--green);font-family:var(--mono);font-size:12.5px;text-decoration:underline;padding:0}
+.spacer{flex:1}
+.curselect{font-family:var(--mono);font-size:13px;border:1px solid var(--line);border-radius:8px;padding:6px 8px;background:var(--paper)}
+.iconbtn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 12px;font-size:13px;font-weight:500}
+.iconbtn:hover{background:#fff}
+
+/* ---------- layout ---------- */
+.wrap{max-width:1180px;margin:0 auto;padding:22px}
+.grid{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:22px;align-items:start}
+@media(max-width:940px){.grid{grid-template-columns:1fr}}
+
+/* ---------- cards ---------- */
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--rad);padding:18px 20px;margin-bottom:18px}
+.card h2{font-family:var(--disp);font-size:16px;font-weight:700;display:flex;align-items:baseline;gap:10px;margin-bottom:14px}
+.card h2 .no{font-family:var(--mono);font-size:12px;font-weight:500;color:var(--green);letter-spacing:.08em}
+.hint-sm{font-size:12.5px;color:var(--muted);margin-top:-8px;margin-bottom:12px}
+.row{display:flex;gap:12px;flex-wrap:wrap}
+.field{display:flex;flex-direction:column;gap:5px;flex:1;min-width:110px}
+.field label{font-size:12px;font-weight:600;letter-spacing:.03em;color:var(--muted);text-transform:uppercase}
+.field input,.field select{border:1px solid var(--line);border-radius:8px;padding:9px 10px;background:var(--paper);font-family:var(--mono);font-size:14px;width:100%}
+.field input:focus,.field select:focus{border-color:var(--green);outline:none}
+.unit-suffix{position:relative}
+.checkboxline{display:flex;align-items:center;gap:9px;font-size:14px;padding:6px 0}
+.checkboxline input{accent-color:var(--green);width:16px;height:16px}
+.subfields{padding-left:25px;margin-top:4px}
+.part{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:10px;background:var(--paper)}
+.part-head{display:flex;justify-content:space-between;align-items:center;font-family:var(--mono);font-size:11.5px;color:var(--muted);margin-bottom:8px;letter-spacing:.05em}
+
+/* ---------- buttons ---------- */
+.btn{border:1px solid var(--ink);background:var(--ink);color:#fff;border-radius:8px;padding:11px 18px;font-weight:600;font-size:14px}
+.btn:hover{background:#000}
+.btn.ghost{background:transparent;color:var(--ink);border-color:var(--line)}
+.btn.ghost:hover{border-color:var(--ink);background:#fff}
+.btn.green{background:var(--green);border-color:var(--green)}
+.btn.green:hover{background:#005f2f}
+.btn.orange{background:var(--orange);border-color:var(--orange)}
+.btn.orange:hover{background:#c94b08}
+.btn:disabled{opacity:.5;cursor:default}
+.btnrow{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+
+/* ---------- margin slider ---------- */
+.marginrow{display:flex;align-items:center;gap:14px}
+.marginrow input[type=range]{flex:1;accent-color:var(--green)}
+.marginrow .mval{font-family:var(--mono);font-size:14px;border:1px solid var(--line);border-radius:8px;background:var(--paper);padding:8px 6px;width:76px;text-align:center}
+.margin-hints{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.mhint{font-family:var(--mono);font-size:12.5px;border:1px solid var(--line);background:var(--paper);border-radius:99px;padding:5px 11px}
+.mhint:hover{border-color:var(--green);color:var(--green)}
+.tipbox{margin-top:12px;background:var(--green-soft);border:1px solid #B9D9C4;border-radius:8px;padding:10px 12px;font-size:13px}
+
+/* ---------- receipt ---------- */
+.receipt-wrap{position:sticky;top:18px}
+.receipt-slot{height:10px;background:var(--ink);border-radius:5px 5px 0 0;box-shadow:0 4px 10px rgba(0,0,0,.25)}
+.receipt{background:var(--paper);font-family:var(--mono);padding:20px 20px 14px;box-shadow:0 10px 26px rgba(20,25,20,.16);position:relative;animation:feed .35s ease-out}
+@keyframes feed{from{transform:translateY(-14px);opacity:.4}to{transform:none;opacity:1}}
+.receipt .rhead{text-align:center;border-bottom:1px dashed var(--line);padding-bottom:12px;margin-bottom:12px}
+.receipt .rhead .t1{font-family:var(--disp);font-weight:700;font-size:15px;letter-spacing:.06em}
+.receipt .rhead .t2{font-size:11px;color:var(--muted);margin-top:3px}
+.rline{display:flex;align-items:baseline;gap:8px;font-size:13px;padding:3.5px 0}
+.rline .dots{flex:1;border-bottom:1px dotted #B9BDB2;transform:translateY(-3px)}
+.rline .val{white-space:nowrap}
+.rline.sub{color:var(--muted);font-size:12px}
+.rline.total{border-top:1px dashed var(--line);margin-top:8px;padding-top:10px;font-weight:600;font-size:14px}
+.rline.grand{border-top:2px solid var(--ink);margin-top:10px;padding-top:12px}
+.rline.grand .lbl{font-family:var(--disp);font-weight:700;font-size:15px;letter-spacing:.04em}
+.rline.grand .val{color:var(--green);font-weight:600;font-size:26px;letter-spacing:-.01em}
+.rline.alt{color:var(--muted);font-size:12px}
+.rline.warn{color:var(--orange);font-size:12px}
+.rfoot{text-align:center;font-size:10.5px;color:var(--muted);border-top:1px dashed var(--line);margin-top:12px;padding-top:10px}
+.rzag{height:9px;background:
+  linear-gradient(-45deg,transparent 7px,var(--paper) 0),
+  linear-gradient(45deg,transparent 7px,var(--paper) 0);
+  background-size:14px 14px;background-position:0 0;filter:drop-shadow(0 3px 3px rgba(20,25,20,.08))}
+.receipt-actions{display:flex;gap:10px;margin-top:14px}
+.receipt-actions .btn{flex:1;text-align:center;padding:11px 6px}
+
+/* ---------- history ---------- */
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:14px}
+.stat{background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+.stat .k{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.stat .v{font-family:var(--mono);font-size:17px;margin-top:3px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)}
+td{padding:7px 8px;border-bottom:1px solid var(--line);font-family:var(--mono);font-size:12.5px}
+td:first-child,th:first-child{font-family:var(--body)}
+.tag{display:inline-block;font-size:11px;font-weight:600;border-radius:99px;padding:2px 9px}
+.tag.ok{background:var(--green-soft);color:var(--green)}
+.tag.fail{background:var(--orange-soft);color:var(--orange)}
+.rowbtn{border:0;background:none;color:var(--muted);font-size:12px;text-decoration:underline;padding:0}
+.rowbtn:hover{color:var(--orange)}
+.empty{color:var(--muted);font-size:13.5px;padding:14px 4px}
+
+/* ---------- modal ---------- */
+.modal-bg{position:fixed;inset:0;background:rgba(20,25,20,.45);display:none;align-items:flex-start;justify-content:center;padding:40px 16px;z-index:50;overflow-y:auto}
+.modal-bg.open{display:flex}
+.modal{background:var(--panel);border-radius:var(--rad);max-width:760px;width:100%;padding:22px 24px;border:1px solid var(--line)}
+.modal h2{font-family:var(--disp);font-size:18px;margin-bottom:4px}
+.modal .sub{font-size:13px;color:var(--muted);margin-bottom:16px}
+.modal h3{font-family:var(--disp);font-size:14px;margin:20px 0 10px;padding-top:16px;border-top:1px solid var(--line)}
+.modal h3:first-of-type{border-top:0;padding-top:0;margin-top:14px}
+.modal table td,.modal table th{font-size:12px;padding:5px 6px}
+.modal table input,.modal table select{padding:6px 7px;font-size:12.5px;border:1px solid var(--line);border-radius:6px;background:#fff;font-family:var(--mono);width:100%}
+.modal .btnrow{justify-content:flex-end;margin-top:20px}
+.srcchip{font-size:10.5px;font-weight:600;border-radius:4px;padding:1px 6px}
+.srcchip.bambu{background:#E2F0E7;color:var(--green)}
+.srcchip.manual{background:#E8E9E4;color:var(--muted)}
+.fetchstatus{font-size:12px;font-family:var(--mono);color:var(--muted);margin-top:8px;min-height:16px;white-space:pre-wrap}
+
+/* ---------- toast ---------- */
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);background:var(--ink);color:#fff;font-size:13.5px;padding:11px 18px;border-radius:8px;opacity:0;pointer-events:none;transition:all .25s ease;z-index:99;max-width:90vw}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.toast.err{background:var(--orange)}
+
+@media(max-width:640px){.wrap{padding:14px}.receipt-wrap{position:static}}
+@media(prefers-reduced-motion:reduce){
+  .receipt{animation:none}
+  .toast{transition:none}
+}
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="wordmark">PRINT<em>·</em>PRIS</div>
+  <div class="elchip" id="elChip"><span class="dot"></span><span id="elChipText">Strøm: hentes…</span> <button id="elRefresh" type="button">Opdatér</button></div>
+  <div class="spacer"></div>
+  <select class="curselect" id="currencySel" title="Valuta">
+    <option value="DKK">DKK kr.</option>
+    <option value="EUR">EUR €</option>
+    <option value="USD">USD $</option>
+  </select>
+  <button class="iconbtn" id="openSettings" type="button">⚙ Indstillinger</button>
+</header>
+
+<div class="wrap">
+  <div class="grid">
+    <!-- ============ VENSTRE: INPUT ============ -->
+    <div>
+      <section class="card">
+        <h2><span class="no">01</span> Printdata</h2>
+        <p class="hint-sm">Gram og tid finder du i Bambu Studio efter slicing. Printes produktet i flere dele, så tilføj én plade pr. del.</p>
+        <div class="row">
+          <div class="field" style="flex:2">
+            <label for="printName">Navn på produkt</label>
+            <input id="printName" type="text" placeholder="f.eks. Dragefigur" style="font-family:var(--body)">
+          </div>
+          <div class="field">
+            <label for="printerSel">Printer</label>
+            <select id="printerSel"></select>
+          </div>
+          <div class="field" style="flex:0 0 auto;justify-content:flex-end">
+            <label>&nbsp;</label>
+            <button class="btn ghost" id="openFilaments" type="button">Filamenter…</button>
+          </div>
+        </div>
+        <div id="partsList" style="margin-top:14px"></div>
+        <div class="row" style="align-items:center">
+          <button class="btn ghost" id="addPart" type="button">＋ Tilføj plade</button>
+          <span class="hint-sm" id="partsTotal" style="margin:0"></span>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2><span class="no">02</span> Tilvalg</h2>
+        <label class="checkboxline">
+          <input type="checkbox" id="wageOn" checked>
+          Medregn timeløn (<span id="wageLabel">150</span> kr/t – ændres under Indstillinger)
+        </label>
+        <div class="subfields row" id="laborRow">
+          <div class="field">
+            <label for="laborMin">Arbejdstid (min: supports, slibning, pakning)</label>
+            <input id="laborMin" type="number" min="0" step="1" value="15">
+          </div>
+        </div>
+        <label class="checkboxline" style="margin-top:10px">
+          <input type="checkbox" id="shipOn">
+          Medregn fragt &amp; emballage
+        </label>
+        <div class="subfields row" id="shipRow" hidden>
+          <div class="field">
+            <label for="shipPost">Porto (kr)</label>
+            <input id="shipPost" type="number" min="0" step="0.5" placeholder="f.eks. 39">
+          </div>
+          <div class="field">
+            <label for="shipPack">Kasse &amp; fyld (kr)</label>
+            <input id="shipPack" type="number" min="0" step="0.5" placeholder="f.eks. 8">
+          </div>
+        </div>
+        <label class="checkboxline" style="margin-top:10px">
+          <input type="checkbox" id="spanOn">
+          Præcis strøm: jeg kender start- og sluttidspunktet for printet
+        </label>
+        <div class="subfields" id="spanRow" hidden>
+          <div class="row">
+            <div class="field">
+              <label for="spanStart">Start</label>
+              <input id="spanStart" type="datetime-local">
+            </div>
+            <div class="field">
+              <label for="spanEnd">Slut</label>
+              <input id="spanEnd" type="datetime-local">
+            </div>
+            <div class="field" style="flex:0 0 auto;justify-content:flex-end">
+              <label>&nbsp;</label>
+              <button class="btn ghost" id="spanAuto" type="button">Slut = start + printtid</button>
+            </div>
+          </div>
+          <p class="hint-sm" style="margin:8px 0 0">Strømmen beregnes kvarter for kvarter med den faktiske spotpris i tidsrummet. Morgendagens priser offentliggøres ca. kl. 13 – timer uden kendt pris bruger gennemsnittet af de kendte.</p>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2><span class="no">03</span> Salg</h2>
+        <div class="row">
+          <div class="field" style="flex:2">
+            <label for="platformSel">Platform</label>
+            <select id="platformSel"></select>
+          </div>
+        </div>
+        <div style="margin-top:16px">
+          <label style="font-size:12px;font-weight:600;letter-spacing:.03em;color:var(--muted);text-transform:uppercase">Avance (fortjeneste i %)</label>
+          <div class="marginrow" style="margin-top:6px">
+            <input type="range" id="marginRange" min="0" max="200" step="5" value="40">
+            <input type="number" class="mval" id="marginNum" min="0" max="500" step="1" value="40"><span style="font-family:var(--mono)">%</span>
+          </div>
+          <div class="margin-hints" id="marginHints"></div>
+          <div class="tipbox" id="marginTip"></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2><span class="no">04</span> Historik &amp; statistik</h2>
+        <div class="stats" id="statsRow"></div>
+        <div style="overflow-x:auto">
+          <table id="histTable">
+            <thead><tr><th>Dato</th><th>Navn</th><th>Kostpris</th><th>Pris</th><th>Fortjeneste</th><th>Status</th><th></th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <p class="empty" id="histEmpty">Ingen print gemt endnu. Gem dit første print fra kvitteringen, så begynder statistikken her.</p>
+        <div class="btnrow">
+          <button class="btn ghost" id="exportCsv" type="button">Eksportér CSV</button>
+          <button class="btn ghost" id="clearHist" type="button">Ryd historik</button>
+        </div>
+      </section>
+    </div>
+
+    <!-- ============ HØJRE: KVITTERING ============ -->
+    <aside class="receipt-wrap">
+      <div class="receipt-slot"></div>
+      <div class="receipt" id="receipt">
+        <div class="rhead">
+          <div class="t1">KOSTPRIS &amp; PRISFORSLAG</div>
+          <div class="t2" id="receiptMeta">–</div>
+        </div>
+        <div id="receiptLines"></div>
+        <div class="rfoot" id="receiptFoot">Tak fordi du regner før du sælger</div>
+      </div>
+      <div class="rzag"></div>
+      <div class="receipt-actions">
+        <button class="btn green" id="saveOk" type="button">Gem i historik</button>
+        <button class="btn orange" id="saveFail" type="button">Gem som fejlet</button>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<!-- ============ MODAL: FILAMENTER ============ -->
+<div class="modal-bg" id="filamentModal">
+  <div class="modal">
+    <h2>Filamenter</h2>
+    <p class="sub">Priserne er pr. kg. Bambu Lab-priser hentes fra eu.store.bambulab.com og konverteres fra EUR til DKK. Du kan altid rette dem manuelt.</p>
+    <button class="btn green" id="fetchBambu" type="button">Hent Bambu Lab-priser</button>
+    <div class="fetchstatus" id="fetchStatus"></div>
+    <h3>Dit filament-lager</h3>
+    <div style="overflow-x:auto">
+      <table id="filTable">
+        <thead><tr><th>Type</th><th>Mærke</th><th>Pris/spole (kr)</th><th>Spole (g)</th><th>Kr/kg</th><th>Kilde</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <h3>Tilføj nyt filament</h3>
+    <div class="row">
+      <div class="field"><label>Type</label><input id="nfType" type="text" placeholder="f.eks. PLA Wood"></div>
+      <div class="field"><label>Mærke</label><input id="nfBrand" type="text" placeholder="f.eks. eSun"></div>
+      <div class="field"><label>Pris/spole (kr)</label><input id="nfPrice" type="number" min="0" step="0.5"></div>
+      <div class="field"><label>Spole (g)</label><input id="nfGrams" type="number" min="1" step="1" value="1000"></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <div class="field" style="flex:2"><label>Bambu-slug (valgfri – til automatisk pris)</label><input id="nfSlug" type="text" placeholder="f.eks. pla-wood"></div>
+      <div class="field" style="flex:0 0 auto;justify-content:flex-end"><label>&nbsp;</label><button class="btn" id="addFilament" type="button">Tilføj filament</button></div>
+    </div>
+    <div class="btnrow">
+      <button class="btn" id="closeFilaments" type="button">Færdig</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ MODAL: INDSTILLINGER ============ -->
+<div class="modal-bg" id="settingsModal">
+  <div class="modal">
+    <h2>Indstillinger</h2>
+    <p class="sub">Gemmes automatisk i browseren på denne computer.</p>
+
+    <h3>Printere</h3>
+    <div style="overflow-x:auto">
+      <table id="printerTable">
+        <thead><tr><th>Navn</th><th>Forbrug (W)</th><th>Købspris (kr)</th><th>Levetid (timer)</th><th>Slid kr/t</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <div class="field"><label>Navn</label><input id="npName" type="text" placeholder="f.eks. Bambu Lab P1S"></div>
+      <div class="field"><label>Forbrug (W)</label><input id="npWatt" type="number" min="0" step="10" value="250"></div>
+      <div class="field"><label>Købspris (kr)</label><input id="npCost" type="number" min="0" step="100"></div>
+      <div class="field"><label>Levetid (timer)</label><input id="npLife" type="number" min="1" step="100" value="5000"></div>
+      <div class="field" style="flex:0 0 auto;justify-content:flex-end"><label>&nbsp;</label><button class="btn" id="addPrinter" type="button">Tilføj</button></div>
+    </div>
+
+    <h3>El-pris</h3>
+    <p class="hint-sm" style="margin-top:0">Spotprisen hentes fra Energinet (Nord Pool day-ahead). Tillægget dækker transport og afgifter – sammenlign med din Clever-regning og justér, så det matcher.</p>
+    <div class="row">
+      <div class="field">
+        <label for="areaSel">Prisområde</label>
+        <select id="areaSel">
+          <option value="DK1">DK1 – Vestdanmark</option>
+          <option value="DK2">DK2 – Østdanmark</option>
+        </select>
+      </div>
+      <div class="field"><label for="tillaeg">Tillæg pr. kWh (kr, før moms)</label><input id="tillaeg" type="number" min="0" step="0.05"></div>
+      <div class="field" style="flex:0 0 auto;justify-content:flex-end"><label>&nbsp;</label>
+        <label class="checkboxline"><input type="checkbox" id="vatOn"> +25 % moms</label>
+      </div>
+    </div>
+    <label class="checkboxline" style="margin-top:8px">
+      <input type="checkbox" id="manualElOn"> Angiv el-pris manuelt i stedet for spotpris
+    </label>
+    <div class="subfields row" id="manualElRow" hidden>
+      <div class="field"><label for="manualElPrice">Samlet pris pr. kWh (kr, inkl. alt)</label><input id="manualElPrice" type="number" min="0" step="0.1"></div>
+    </div>
+
+    <h3>Arbejde, spild &amp; platforme</h3>
+    <div class="row">
+      <div class="field"><label for="wageInput">Din timeløn (kr/t)</label><input id="wageInput" type="number" min="0" step="5"></div>
+      <div class="field">
+        <label for="failMode">Fejlrate (spild)</label>
+        <select id="failMode">
+          <option value="auto">Automatisk – udregnet fra historik</option>
+          <option value="manual">Manuel procent</option>
+        </select>
+      </div>
+      <div class="field" id="failManualWrap"><label for="failManual">Fejlrate (%)</label><input id="failManual" type="number" min="0" max="100" step="1"></div>
+    </div>
+    <div style="overflow-x:auto;margin-top:14px">
+      <table id="platformTable">
+        <thead><tr><th>Platform</th><th>Gebyr (%)</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <div class="field"><label>Ny platform</label><input id="nplName" type="text" placeholder="f.eks. Etsy"></div>
+      <div class="field"><label>Gebyr (%)</label><input id="nplFee" type="number" min="0" max="50" step="0.5" value="0"></div>
+      <div class="field" style="flex:0 0 auto;justify-content:flex-end"><label>&nbsp;</label><button class="btn" id="addPlatform" type="button">Tilføj</button></div>
+    </div>
+
+    <div class="btnrow">
+      <button class="btn" id="closeSettings" type="button">Færdig</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+/* ============================================================
+   PrintPris – 3D-print prisberegner
+   Data gemmes i localStorage under nøglen 'printpris.v1'
+   ============================================================ */
+const LS_KEY = 'printpris.v1';
+const FALLBACK_FX = { EUR: 0.13376, USD: 0.15507 }; // pr. 1 DKK, ECB-kurs ca.
+const DEFAULT_SPILL = 0.05;
+
+const SEED_FILAMENTS = [
+  ['PLA Basic','pla-basic-filament',22.99],['PLA Matte','pla-matte',22.99],
+  ['PLA Silk+','pla-silk-upgrade',22.99],['PLA Translucent','pla-translucent',25.99],
+  ['PLA Pure','pla-pure',27.99],['PLA-CF','pla-cf',26.99],
+  ['PETG Basic','petg-basic',22.99],['PETG HF','petg-hf',25.99],
+  ['PETG Translucent','petg-translucent',22.99],['PETG-CF','petg-cf',32.99],
+  ['ABS','abs-filament',22.99],
+].map(([type,slug,eur]) => ({
+  id: uid(), type, brand: 'Bambu Lab', slug,
+  priceDkk: Math.round(eur / FALLBACK_FX.EUR * 10) / 10,
+  spoolG: 1000, src: 'bambu', updated: '2026-08-18'
+}));
+
+function uid(){ return Math.random().toString(36).slice(2,10); }
+
+function seed(){
+  return {
+    filaments: SEED_FILAMENTS,
+    printers: [{ id: uid(), name: 'Bambu Lab X2D', watt: 250, cost: 8800, lifeHours: 5000 }],
+    platforms: [
+      { id: uid(), name: 'Facebook Marketplace', fee: 0 },
+      { id: uid(), name: 'DBA', fee: 0 },
+      { id: uid(), name: 'Vinted', fee: 0 },
+    ],
+    settings: {
+      area: 'DK1', tillæg: 0.85, vat: true,
+      manualElOn: false, manualElPrice: 2.0,
+      wage: 150, failMode: 'auto', failManual: 5,
+      currency: 'DKK', margin: 40,
+    },
+    el: null,        // { spotDkkMwh, slotDK, fetchedAt, area }
+    fx: null,        // { EUR, USD, date }
+    history: [],
+  };
+}
+
+let state;
+try { state = JSON.parse(localStorage.getItem(LS_KEY)) || seed(); }
+catch(e){ state = seed(); }
+if (!state.settings) state = seed();
+state.settings = Object.assign(seed().settings, state.settings); // udfyld nye nøgler med standarder
+// engangs-migrering: X2D-forbrug rettet til officiel steady-state værdi (PLA)
+state.printers.forEach(p => { if (p.name === 'Bambu Lab X2D' && p.watt === 200) p.watt = 250; });
+save();
+function save(){ localStorage.setItem(LS_KEY, JSON.stringify(state)); }
+
+/* ---------- helpers ---------- */
+const $ = id => document.getElementById(id);
+function esc(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function num(v){ const n = parseFloat(v); return isFinite(n) && n > 0 ? n : 0; }
+function fxRate(cur){
+  if (cur === 'DKK') return 1;
+  const r = (state.fx && state.fx[cur]) || FALLBACK_FX[cur];
+  return r || 1;
+}
+function fmt(dkk, forceCur){
+  const cur = forceCur || state.settings.currency;
+  const val = dkk * fxRate(cur);
+  return new Intl.NumberFormat('da-DK', { style: 'currency', currency: cur, maximumFractionDigits: 2 }).format(val);
+}
+let toastTimer;
+function toast(msg, isErr){
+  const t = $('toast');
+  t.textContent = msg; t.classList.toggle('err', !!isErr); t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 3400);
+}
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* ---------- el-pris (Energinet DayAheadPrices) ---------- */
+let elSeries = []; // [{t: ms (UTC), p: DKK/MWh}] – dækker i dag + i morgen
+function elTotalKrh(){
+  const s = state.settings;
+  if (s.manualElOn) return { price: s.manualElPrice, label: 'manuel' };
+  if (!state.el) return { price: s.manualElPrice, label: 'ukendt (manuel standard)' };
+  const spot = state.el.spotDkkMwh / 1000;
+  const p = (spot + s.tillæg) * (s.vat ? 1.25 : 1);
+  return { price: p, label: null };
+}
+async function fetchSpot(silent){
+  const s = state.settings;
+  const pad = n => String(n).padStart(2,'0');
+  const d = new Date();
+  const start = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T00:00`;
+  const end = new Date(d.getTime() + 2*864e5);
+  const endS = `${end.getFullYear()}-${pad(end.getMonth()+1)}-${pad(end.getDate())}T00:00`;
+  const url = 'https://api.energidataservice.dk/dataset/DayAheadPrices'
+    + `?start=${encodeURIComponent(start)}&end=${encodeURIComponent(endS)}`
+    + `&filter=${encodeURIComponent(JSON.stringify({ PriceArea: [s.area] }))}`
+    + '&sort=TimeUTC ASC&limit=200';
+  try {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    const recs = data.records || [];
+    const now = Date.now();
+    let current = null;
+    for (const rec of recs){
+      const t = new Date(rec.TimeUTC + 'Z').getTime();
+      if (t <= now) current = rec; else break;
+    }
+    if (!current) current = recs[recs.length - 1];
+    if (!current) throw new Error('Ingen priser modtaget');
+    state.el = { spotDkkMwh: current.DayAheadPriceDKK, slotDK: current.TimeDK, fetchedAt: new Date().toISOString(), area: s.area };
+    elSeries = recs.map(r => ({ t: new Date(r.TimeUTC + 'Z').getTime(), p: r.DayAheadPriceDKK }));
+    state.elSeries = elSeries;
+    save(); renderElChip(); calculate();
+  } catch(e){
+    renderElChip(true);
+    if (!silent) toast('Kunne ikke hente spotpris – bruger ' + (state.el ? 'seneste gemte pris' : 'manuel pris'), true);
+  }
+}
+function renderElChip(stale){
+  const chip = $('elChip'), txt = $('elChipText'), s = state.settings;
+  if (s.manualElOn){
+    txt.textContent = `Strøm: ${s.manualElPrice.toLocaleString('da-DK')} kr/kWh (manuelt)`;
+    chip.classList.remove('stale'); return;
+  }
+  const { price } = elTotalKrh();
+  if (state.el){
+    const slot = state.el.slotDK ? state.el.slotDK.slice(11,16) : '';
+    txt.textContent = `Strøm: ${price.toLocaleString('da-DK',{minimumFractionDigits:2,maximumFractionDigits:2})} kr/kWh · ${state.el.area} kl. ${slot}`;
+  } else {
+    txt.textContent = `Strøm: ${price.toLocaleString('da-DK',{minimumFractionDigits:2})} kr/kWh (standard – klik Opdatér)`;
+  }
+  chip.classList.toggle('stale', !!stale);
+}
+
+/* Præcis strømpris for et konkret tidsrum: læg hvert kvarters faktiske pris sammen.
+   Timer uden offentliggjort pris bruger gennemsnittet af de kendte timer. */
+function spanElCost(watt, startMs, endMs){
+  const s = state.settings;
+  const step = 15 * 60 * 1000;
+  const kwh = (watt / 1000) * ((endMs - startMs) / 36e5);
+  if (!elSeries.length) return null;
+  let cost = 0, coveredMs = 0, priceSum = 0, priceN = 0;
+  for (const rec of elSeries){
+    const a = Math.max(rec.t, startMs), b = Math.min(rec.t + step, endMs);
+    if (b <= a) continue;
+    const krKwh = (rec.p / 1000 + s.tillæg) * (s.vat ? 1.25 : 1);
+    cost += (watt / 1000) * ((b - a) / 36e5) * krKwh;
+    coveredMs += b - a; priceSum += krKwh; priceN++;
+  }
+  const avgKnown = priceN ? priceSum / priceN : elTotalKrh().price;
+  const missingMs = Math.max(0, (endMs - startMs) - coveredMs);
+  if (missingMs > 0) cost += (watt / 1000) * (missingMs / 36e5) * avgKnown;
+  return { cost, kwh, avg: kwh > 0 ? cost / kwh : 0, missingHrs: missingMs / 36e5 };
+}
+function toLocalInput(ms){
+  const d = new Date(ms), p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/* ---------- valutakurser ---------- */
+async function fetchFx(){
+  try {
+    const r = await fetch('https://api.frankfurter.dev/v1/latest?base=DKK&symbols=EUR,USD');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    if (d && d.rates){ state.fx = { EUR: d.rates.EUR, USD: d.rates.USD, date: d.date }; save(); }
+  } catch(e){ /* stille: bruger fallback-kurser */ }
+}
+
+/* ---------- fejlrate ---------- */
+function failRate(){
+  const s = state.settings;
+  if (s.failMode === 'manual') return (s.failManual || 0) / 100;
+  const h = state.history;
+  if (h.length >= 5){
+    const failed = h.filter(x => x.failed).length;
+    return failed / h.length;
+  }
+  return DEFAULT_SPILL;
+}
+function failRateLabel(){
+  const s = state.settings;
+  if (s.failMode === 'manual') return s.failManual + ' % (manuelt)';
+  if (state.history.length >= 5) return (failRate()*100).toLocaleString('da-DK',{maximumFractionDigits:1}) + ' % (fra historik)';
+  return '5 % (standard)';
+}
+
+/* ---------- plader (dele af et produkt) ---------- */
+let parts = [];
+function filOptionsHtml(selId){
+  return state.filaments.map(f => `<option value="${f.id}"${f.id===selId?' selected':''}>${esc(f.type)} · ${esc(f.brand)} (${(f.priceDkk/(f.spoolG/1000)).toLocaleString('da-DK',{maximumFractionDigits:0})} kr/kg)</option>`).join('');
+}
+function addPart(){
+  parts.push({ id: uid(), filamentId: (state.filaments[0]||{}).id || null, grams: 0, hours: 0, mins: 0 });
+  renderParts(); calculate();
+}
+function removePart(id){
+  if (parts.length <= 1) return;
+  parts = parts.filter(p => p.id !== id);
+  renderParts(); calculate();
+}
+function renderParts(){
+  const list = $('partsList');
+  list.innerHTML = '';
+  parts.forEach((p, i) => {
+    if (!state.filaments.find(f => f.id === p.filamentId)) p.filamentId = (state.filaments[0]||{}).id || null;
+    const div = document.createElement('div');
+    div.className = 'part';
+    div.innerHTML =
+      `<div class="part-head"><span>PLADE ${i+1}</span>${parts.length>1?'<button class="rowbtn" type="button">fjern</button>':''}</div>` +
+      `<div class="row">` +
+      `<div class="field" style="flex:2"><label>Filament</label><select class="p-fil">${filOptionsHtml(p.filamentId)}</select></div>` +
+      `<div class="field"><label>Gram</label><input class="p-grams" type="number" min="0" step="1" value="${p.grams||''}" placeholder="0"></div>` +
+      `<div class="field"><label>Timer</label><input class="p-hours" type="number" min="0" step="1" value="${p.hours||''}" placeholder="0"></div>` +
+      `<div class="field"><label>Min</label><input class="p-mins" type="number" min="0" max="59" step="1" value="${p.mins||''}" placeholder="0"></div>` +
+      `</div>`;
+    const filSel = div.querySelector('.p-fil');
+    filSel.onchange = () => { p.filamentId = filSel.value; calculate(); };
+    const g = div.querySelector('.p-grams'), hIn = div.querySelector('.p-hours'), m = div.querySelector('.p-mins');
+    g.oninput = () => { p.grams = num(g.value); updatePartsTotal(); calculate(); };
+    hIn.oninput = () => { p.hours = num(hIn.value); updatePartsTotal(); calculate(); };
+    m.oninput = () => { p.mins = num(m.value); updatePartsTotal(); calculate(); };
+    const rm = div.querySelector('.rowbtn');
+    if (rm) rm.onclick = () => removePart(p.id);
+    list.appendChild(div);
+  });
+  updatePartsTotal();
+}
+function updatePartsTotal(){
+  const grams = parts.reduce((a,p)=>a+p.grams,0);
+  const hours = parts.reduce((a,p)=>a+p.hours+p.mins/60,0);
+  const hh = Math.floor(hours), mm = Math.round((hours-hh)*60);
+  $('partsTotal').textContent = (grams || hours)
+    ? `I alt: ${grams.toLocaleString('da-DK')} g · ${hh} t ${mm} min på ${parts.length} plade${parts.length>1?'r':''}`
+    : '';
+}
+
+/* ---------- beregning ---------- */
+function getInputs(){
+  return {
+    name: $('printName').value.trim(),
+    parts: parts.map(p => ({
+      grams: p.grams,
+      hours: p.hours + p.mins / 60,
+      filament: state.filaments.find(f => f.id === p.filamentId) || state.filaments[0],
+    })),
+    wageOn: $('wageOn').checked,
+    laborMin: num($('laborMin').value),
+    shipOn: $('shipOn').checked,
+    shipPost: num($('shipPost').value),
+    shipPack: num($('shipPack').value),
+    spanOn: $('spanOn').checked,
+    spanStart: $('spanStart').value ? new Date($('spanStart').value).getTime() : null,
+    spanEnd: $('spanEnd').value ? new Date($('spanEnd').value).getTime() : null,
+    margin: num($('marginNum').value),
+    printer: state.printers.find(p => p.id === $('printerSel').value) || state.printers[0],
+    platform: state.platforms.find(p => p.id === $('platformSel').value) || state.platforms[0],
+  };
+}
+function compute(inp){
+  const s = state.settings;
+  const fr = failRate();
+  const kgPrice = f => f ? f.priceDkk / (f.spoolG / 1000) : 0;
+  const partRows = inp.parts.map(p => Object.assign({}, p, { cost: p.grams / 1000 * kgPrice(p.filament) }));
+  const material = partRows.reduce((a, p) => a + p.cost, 0);
+  const totalHours = inp.parts.reduce((a, p) => a + p.hours, 0);
+  const watt = inp.printer ? inp.printer.watt : 0;
+  let kwh = (watt / 1000) * totalHours;
+  let elPrice = elTotalKrh().price;
+  let electricity = kwh * elPrice;
+  let elSpan = null;
+  if (inp.spanOn && inp.spanStart && inp.spanEnd && inp.spanEnd > inp.spanStart){
+    kwh = (watt / 1000) * ((inp.spanEnd - inp.spanStart) / 36e5);
+    if (s.manualElOn){
+      electricity = kwh * s.manualElPrice;
+      elSpan = { avg: s.manualElPrice, missingHrs: 0 };
+    } else {
+      const sp = spanElCost(watt, inp.spanStart, inp.spanEnd);
+      if (sp){ electricity = sp.cost; elPrice = sp.avg; elSpan = { avg: sp.avg, missingHrs: sp.missingHrs }; }
+    }
+  }
+  const spill = (material + electricity) * fr;
+  const wear = inp.printer ? totalHours * (inp.printer.cost / inp.printer.lifeHours) : 0;
+  const labor = inp.wageOn ? (inp.laborMin / 60) * s.wage : 0;
+  const ship = inp.shipOn ? inp.shipPost + inp.shipPack : 0;
+  const cost = material + electricity + spill + wear + labor + ship;
+  const feePct = inp.platform ? inp.platform.fee / 100 : 0;
+  const price = feePct < 0.95 ? cost * (1 + inp.margin / 100) / (1 - feePct) : cost;
+  const feeAmt = price * feePct;
+  const profit = price - feeAmt - cost;
+  const costNoLabor = cost - labor;
+  const priceNoLabor = feePct < 0.95 ? costNoLabor * (1 + inp.margin / 100) / (1 - feePct) : costNoLabor;
+  return { partRows, material, totalHours, electricity, spill, wear, labor, ship, cost, price, feeAmt, profit, kwh, elPrice, elSpan, fr, costNoLabor, priceNoLabor };
+}
+
+/* ---------- kvittering ---------- */
+let lastPrice = null, priceAnim = null;
+function line(lbl, val, cls){
+  return `<div class="rline${cls ? ' ' + cls : ''}"><span>${lbl}</span><span class="dots"></span><span class="val">${val}</span></div>`;
+}
+function calculate(){
+  const inp = getInputs();
+  if (!state.filaments.length || !inp.printer){ $('receiptLines').innerHTML = '<p class="empty">Tilføj et filament og en printer for at starte.</p>'; return; }
+  const c = compute(inp);
+  const now = new Date();
+  const types = [...new Set(inp.parts.map(p => p.filament && p.filament.type).filter(Boolean))];
+  $('receiptMeta').textContent =
+    `${now.toLocaleDateString('da-DK')} · ${esc(types.join(' + ') || '–')} · ${esc(inp.printer.name)}`;
+
+  let h = '';
+  if (c.partRows.length === 1){
+    const p = c.partRows[0];
+    h += line(`Materiale · ${p.grams} g ${esc(p.filament ? p.filament.type : '')}`, fmt(p.cost));
+  } else {
+    c.partRows.forEach((p, i) => { h += line(`Plade ${i+1} · ${esc(p.filament ? p.filament.type : '–')} · ${p.grams} g`, fmt(p.cost)); });
+  }
+  if (c.elSpan && inp.spanOn){
+    const t = ms => new Date(ms).toLocaleTimeString('da-DK', { hour: '2-digit', minute: '2-digit' });
+    h += line(`Strøm · ${c.kwh.toLocaleString('da-DK',{maximumFractionDigits:2})} kWh · kl. ${t(inp.spanStart)}–${t(inp.spanEnd)}`, fmt(c.electricity));
+    h += line(`Snitpris i tidsrummet ${c.elSpan.avg.toLocaleString('da-DK',{minimumFractionDigits:2})} kr/kWh`, '', 'sub');
+    if (c.elSpan.missingHrs > 0.25) h += line(`${c.elSpan.missingHrs.toLocaleString('da-DK',{maximumFractionDigits:1})} t uden kendt pris – gennemsnit brugt`, '', 'warn');
+  } else {
+    h += line(`Strøm · ${c.kwh.toLocaleString('da-DK',{maximumFractionDigits:2})} kWh à ${c.elPrice.toLocaleString('da-DK',{minimumFractionDigits:2})} kr`, fmt(c.electricity));
+  }
+  h += line(`Fejltilæg · ${failRateLabel()}`, fmt(c.spill));
+  h += line(`Slid på printer`, fmt(c.wear));
+  if (inp.shipOn) h += line('Fragt &amp; emballage', fmt(c.ship));
+  if (inp.wageOn) h += line(`Arbejde · ${inp.laborMin} min`, fmt(c.labor));
+  h += line('Kostpris i alt', fmt(c.cost), 'total');
+  if (inp.platform && inp.platform.fee > 0) h += line(`${esc(inp.platform.name)}-gebyr · ${inp.platform.fee} %`, '− ' + fmt(c.feeAmt));
+  h += line('Din fortjeneste', fmt(c.profit));
+  if (c.totalHours > 0) h += line('Fortjeneste pr. printtime', fmt(c.profit / c.totalHours), 'sub');
+  if (inp.wageOn) h += line(`Uden timeløn: kostpris ${fmt(c.costNoLabor)} · pris ${fmt(c.priceNoLabor)}`, '', 'alt');
+
+  const nice = Math.ceil(c.price / 5) * 5;
+  const niceTxt = nice !== Math.round(c.price) && nice > c.price ? ` · pæn pris: ${fmt(nice)}` : '';
+  h += `<div class="rline grand"><span class="lbl">ANBEFALET PRIS</span><span class="dots"></span><span class="val" id="grandVal"></span></div>`;
+  h += line(`Avance ${inp.margin} %${niceTxt}`, '', 'sub');
+  $('receiptLines').innerHTML = h;
+
+  const gv = $('grandVal');
+  if (reducedMotion || lastPrice === null){
+    gv.textContent = fmt(c.price);
+  } else {
+    cancelAnimationFrame(priceAnim);
+    const from = lastPrice, to = c.price, t0 = performance.now(), cur = state.settings.currency;
+    const step = t => {
+      const k = Math.min(1, (t - t0) / 350), e = 1 - Math.pow(1 - k, 3);
+      gv.textContent = fmt(from + (to - from) * e, cur);
+      if (k < 1) priceAnim = requestAnimationFrame(step);
+    };
+    priceAnim = requestAnimationFrame(step);
+  }
+  lastPrice = c.price;
+  renderMarginHints(inp, c);
+}
+
+/* ---------- margin-hints ---------- */
+function renderMarginHints(inp, c){
+  const box = $('marginHints');
+  box.innerHTML = '';
+  [20, 40, 75].forEach(m => {
+    const feePct = inp.platform ? inp.platform.fee / 100 : 0;
+    const p = feePct < 0.95 ? c.cost * (1 + m / 100) / (1 - feePct) : c.cost;
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'mhint';
+    b.textContent = `${m} % → ${fmt(p)}`;
+    b.onclick = () => { $('marginRange').value = m; $('marginNum').value = m; state.settings.margin = m; save(); calculate(); };
+    box.appendChild(b);
+  });
+  const cost = c.cost;
+  let tip;
+  if (cost < 30) tip = 'Tip: Små print under 30 kr sælges typisk med 60–100 % avance – køber betaler for det færdige produkt, ikke filamentet.';
+  else if (cost < 150) tip = 'Tip: Mellemstore print sælges typisk med 30–60 % avance. Tjek hvad lignende print går for på DBA og Vinted.';
+  else tip = 'Tip: Ved dyre print er 20–40 % avance almindeligt – en høj procent kan gøre prisen svær at sælge.';
+  if (inp.wageOn && c.totalHours > 0 && c.profit / c.totalHours < state.settings.wage && inp.margin <= 40)
+    tip += ' Din fortjeneste pr. printtime er lavere end din timeløn – overvej en højere avance.';
+  $('marginTip').textContent = tip;
+}
+
+/* ---------- historik ---------- */
+function saveToHistory(failed){
+  const inp = getInputs();
+  const c = compute(inp);
+  const totalGrams = inp.parts.reduce((a, p) => a + p.grams, 0);
+  if (totalGrams <= 0 && c.totalHours <= 0){ toast('Udfyld gram og tid før du gemmer', true); return; }
+  const types = [...new Set(inp.parts.map(p => p.filament && p.filament.type).filter(Boolean))];
+  state.history.unshift({
+    id: uid(), date: new Date().toISOString(), name: inp.name || '(uden navn)',
+    grams: totalGrams, hours: c.totalHours,
+    filament: types.join(' + ') || '–', printer: inp.printer.name,
+    parts: inp.parts.map(p => ({ type: p.filament ? p.filament.type : '?', grams: p.grams, hours: Math.round(p.hours * 100) / 100 })),
+    cost: c.cost, price: failed ? 0 : c.price, fee: failed ? 0 : c.feeAmt,
+    profit: failed ? -c.cost : c.profit, failed: !!failed,
+  });
+  save(); renderHistory(); calculate();
+  toast(failed ? 'Gemt som fejlet print – spildet tæller med i fejlraten' : 'Gemt i historik');
+}
+function renderHistory(){
+  const tb = $('histTable').querySelector('tbody');
+  tb.innerHTML = '';
+  $('histEmpty').style.display = state.history.length ? 'none' : '';
+  for (const h of state.history){
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      `<td>${new Date(h.date).toLocaleDateString('da-DK')}</td>` +
+      `<td>${esc(h.name)}</td>` +
+      `<td>${fmt(h.cost)}</td>` +
+      `<td>${h.failed ? '–' : fmt(h.price)}</td>` +
+      `<td style="color:${h.profit < 0 ? 'var(--orange)' : 'inherit'}">${fmt(h.profit)}</td>` +
+      `<td><span class="tag ${h.failed ? 'fail' : 'ok'}">${h.failed ? 'Fejlet' : 'OK'}</span></td>` +
+      `<td><button class="rowbtn" data-id="${h.id}">slet</button></td>`;
+    tb.appendChild(tr);
+  }
+  tb.querySelectorAll('.rowbtn').forEach(b => b.onclick = () => {
+    state.history = state.history.filter(x => x.id !== b.dataset.id);
+    save(); renderHistory(); calculate();
+  });
+  renderStats();
+}
+function renderStats(){
+  const h = state.history;
+  const ok = h.filter(x => !x.failed);
+  const failed = h.filter(x => x.failed);
+  const rev = ok.reduce((a, x) => a + x.price - x.fee, 0);
+  const prof = h.reduce((a, x) => a + x.profit, 0);
+  const rate = h.length ? (failed.length / h.length * 100) : 0;
+  $('statsRow').innerHTML =
+    `<div class="stat"><div class="k">Print i alt</div><div class="v">${h.length}</div></div>` +
+    `<div class="stat"><div class="k">Fejlrate</div><div class="v">${rate.toLocaleString('da-DK',{maximumFractionDigits:1})} %</div></div>` +
+    `<div class="stat"><div class="k">Omsætning</div><div class="v">${fmt(rev)}</div></div>` +
+    `<div class="stat"><div class="k">Fortjeneste</div><div class="v">${fmt(prof)}</div></div>` +
+    `<div class="stat"><div class="k">Tab på fejlede print</div><div class="v">${fmt(failed.reduce((a,x)=>a+x.cost,0))}</div></div>`;
+}
+function exportCsv(){
+  if (!state.history.length){ toast('Historikken er tom', true); return; }
+  const rows = [['Dato','Navn','Gram','Timer','Filament','Printer','Kostpris DKK','Pris DKK','Gebyr DKK','Fortjeneste DKK','Status']];
+  for (const h of state.history)
+    rows.push([h.date.slice(0,10), h.name, h.grams, h.hours.toFixed(2), h.filament, h.printer,
+      h.cost.toFixed(2), h.price.toFixed(2), h.fee.toFixed(2), h.profit.toFixed(2), h.failed ? 'Fejlet' : 'OK']);
+  const csv = rows.map(r => r.map(x => `"${String(x).replace(/"/g,'""')}"`).join(';')).join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = 'printpris-historik.csv'; a.click(); URL.revokeObjectURL(a.href);
+}
+
+/* ---------- selects ---------- */
+function renderSelects(){
+  $('printerSel').innerHTML = state.printers
+    .map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+  $('platformSel').innerHTML = state.platforms
+    .map(p => `<option value="${p.id}">${esc(p.name)}${p.fee ? ' (' + p.fee + ' % gebyr)' : ''}</option>`).join('');
+}
+
+/* ---------- filament-administration ---------- */
+function renderFilTable(){
+  const tb = $('filTable').querySelector('tbody');
+  tb.innerHTML = '';
+  for (const f of state.filaments){
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      `<td><input value="${esc(f.type)}" data-f="${f.id}" data-k="type"></td>` +
+      `<td><input value="${esc(f.brand)}" data-f="${f.id}" data-k="brand"></td>` +
+      `<td style="width:90px"><input type="number" min="0" step="0.5" value="${f.priceDkk}" data-f="${f.id}" data-k="priceDkk"></td>` +
+      `<td style="width:80px"><input type="number" min="1" step="1" value="${f.spoolG}" data-f="${f.id}" data-k="spoolG"></td>` +
+      `<td>${(f.priceDkk/(f.spoolG/1000)).toLocaleString('da-DK',{maximumFractionDigits:1})}</td>` +
+      `<td><span class="srcchip ${f.src}">${f.src === 'bambu' ? 'Bambu' : 'Manuel'}</span>${f.updated ? '<br><span style="font-size:10px;color:var(--muted)">' + f.updated + '</span>' : ''}</td>` +
+      `<td><button class="rowbtn" data-del="${f.id}">slet</button></td>`;
+    tb.appendChild(tr);
+  }
+  tb.querySelectorAll('input').forEach(i => i.onchange = () => {
+    const f = state.filaments.find(x => x.id === i.dataset.f);
+    if (!f) return;
+    f[i.dataset.k] = i.dataset.k === 'type' || i.dataset.k === 'brand' ? i.value : num(i.value);
+    f.src = 'manual';
+    save(); renderFilTable(); renderSelects(); renderParts(); calculate();
+  });
+  tb.querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
+    state.filaments = state.filaments.filter(x => x.id !== b.dataset.del);
+    save(); renderFilTable(); renderSelects(); renderParts(); calculate();
+  });
+}
+const BAMBU_PROXIES = [
+  u => u,
+  u => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u),
+  u => 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(u),
+];
+async function fetchBambuPrice(slug){
+  const url = 'https://eu.store.bambulab.com/en/products/' + slug;
+  for (const wrap of BAMBU_PROXIES){
+    try {
+      const r = await fetch(wrap(url), { signal: AbortSignal.timeout(15000) });
+      if (!r.ok) continue;
+      const t = await r.text();
+      const m = t.match(/MSRP: €([\d]+[.,][\d]{2})/) || t.match(/From €([\d]+[.,][\d]{2})/);
+      if (m) return parseFloat(m[1].replace(',', '.'));
+    } catch(e){ /* prøv næste proxy */ }
+  }
+  return null;
+}
+async function fetchAllBambu(){
+  const targets = state.filaments.filter(f => f.slug);
+  if (!targets.length){ toast('Ingen filamenter har et Bambu-slug', true); return; }
+  const btn = $('fetchBambu'); btn.disabled = true;
+  const eurRate = 1 / fxRate('EUR');
+  let ok = 0, fail = 0;
+  for (const f of targets){
+    $('fetchStatus').textContent = `Henter ${f.type}…`;
+    const eur = await fetchBambuPrice(f.slug);
+    if (eur !== null){
+      f.priceDkk = Math.round(eur * eurRate * 10) / 10;
+      f.src = 'bambu'; f.updated = new Date().toISOString().slice(0,10); ok++;
+    } else fail++;
+  }
+  save(); renderFilTable(); renderSelects(); renderParts(); calculate();
+  $('fetchStatus').textContent = `Færdig: ${ok} opdateret${fail ? `, ${fail} kunne ikke hentes` : ''}.`;
+  btn.disabled = false;
+  if (!ok) toast('Priserne kunne ikke hentes (butikken blokerer automatisk adgang). Ret dem manuelt i tabellen.', true);
+}
+
+/* ---------- printere & platforme ---------- */
+function renderPrinterTable(){
+  const tb = $('printerTable').querySelector('tbody');
+  tb.innerHTML = '';
+  for (const p of state.printers){
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      `<td><input value="${esc(p.name)}" data-p="${p.id}" data-k="name"></td>` +
+      `<td style="width:90px"><input type="number" min="0" step="10" value="${p.watt}" data-p="${p.id}" data-k="watt"></td>` +
+      `<td style="width:100px"><input type="number" min="0" step="100" value="${p.cost}" data-p="${p.id}" data-k="cost"></td>` +
+      `<td style="width:100px"><input type="number" min="1" step="100" value="${p.lifeHours}" data-p="${p.id}" data-k="lifeHours"></td>` +
+      `<td>${(p.cost/p.lifeHours).toLocaleString('da-DK',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>` +
+      `<td><button class="rowbtn" data-del="${p.id}">slet</button></td>`;
+    tb.appendChild(tr);
+  }
+  tb.querySelectorAll('input').forEach(i => i.onchange = () => {
+    const p = state.printers.find(x => x.id === i.dataset.p);
+    if (!p) return;
+    p[i.dataset.k] = i.dataset.k === 'name' ? i.value : num(i.value);
+    save(); renderPrinterTable(); renderSelects(); calculate();
+  });
+  tb.querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
+    if (state.printers.length <= 1){ toast('Du skal have mindst én printer', true); return; }
+    state.printers = state.printers.filter(x => x.id !== b.dataset.del);
+    save(); renderPrinterTable(); renderSelects(); calculate();
+  });
+}
+function renderPlatformTable(){
+  const tb = $('platformTable').querySelector('tbody');
+  tb.innerHTML = '';
+  for (const p of state.platforms){
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      `<td><input value="${esc(p.name)}" data-p="${p.id}" data-k="name"></td>` +
+      `<td style="width:80px"><input type="number" min="0" max="50" step="0.5" value="${p.fee}" data-p="${p.id}" data-k="fee"></td>` +
+      `<td><button class="rowbtn" data-del="${p.id}">slet</button></td>`;
+    tb.appendChild(tr);
+  }
+  tb.querySelectorAll('input').forEach(i => i.onchange = () => {
+    const p = state.platforms.find(x => x.id === i.dataset.p);
+    if (!p) return;
+    p[i.dataset.k] = i.dataset.k === 'name' ? i.value : num(i.value);
+    save(); renderPlatformTable(); renderSelects(); calculate();
+  });
+  tb.querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
+    state.platforms = state.platforms.filter(x => x.id !== b.dataset.del);
+    save(); renderPlatformTable(); renderSelects(); calculate();
+  });
+}
+
+/* ---------- indstillinger ---------- */
+function loadSettingsForm(){
+  const s = state.settings;
+  $('areaSel').value = s.area;
+  $('tillaeg').value = s.tillæg;
+  $('vatOn').checked = s.vat;
+  $('manualElOn').checked = s.manualElOn;
+  $('manualElRow').hidden = !s.manualElOn;
+  $('manualElPrice').value = s.manualElPrice;
+  $('wageInput').value = s.wage;
+  $('failMode').value = s.failMode;
+  $('failManual').value = s.failManual;
+  $('failManualWrap').style.visibility = s.failMode === 'manual' ? 'visible' : 'hidden';
+  $('wageLabel').textContent = s.wage;
+}
+function bindSettings(){
+  const s = state.settings;
+  $('areaSel').onchange = () => { s.area = $('areaSel').value; save(); fetchSpot(true); };
+  $('tillaeg').onchange = () => { s.tillæg = num($('tillaeg').value); save(); renderElChip(); calculate(); };
+  $('vatOn').onchange = () => { s.vat = $('vatOn').checked; save(); renderElChip(); calculate(); };
+  $('manualElOn').onchange = () => { s.manualElOn = $('manualElOn').checked; $('manualElRow').hidden = !s.manualElOn; save(); renderElChip(); calculate(); };
+  $('manualElPrice').onchange = () => { s.manualElPrice = num($('manualElPrice').value); save(); renderElChip(); calculate(); };
+  $('wageInput').onchange = () => { s.wage = num($('wageInput').value); $('wageLabel').textContent = s.wage; save(); calculate(); };
+  $('failMode').onchange = () => { s.failMode = $('failMode').value; $('failManualWrap').style.visibility = s.failMode === 'manual' ? 'visible' : 'hidden'; save(); calculate(); };
+  $('failManual').onchange = () => { s.failManual = num($('failManual').value); save(); calculate(); };
+  $('addPrinter').onclick = () => {
+    const name = $('npName').value.trim();
+    if (!name){ toast('Giv printeren et navn', true); return; }
+    state.printers.push({ id: uid(), name, watt: num($('npWatt').value) || 200, cost: num($('npCost').value), lifeHours: num($('npLife').value) || 5000 });
+    $('npName').value = ''; $('npCost').value = '';
+    save(); renderPrinterTable(); renderSelects(); calculate();
+  };
+  $('addPlatform').onclick = () => {
+    const name = $('nplName').value.trim();
+    if (!name){ toast('Giv platformen et navn', true); return; }
+    state.platforms.push({ id: uid(), name, fee: num($('nplFee').value) });
+    $('nplName').value = ''; $('nplFee').value = 0;
+    save(); renderPlatformTable(); renderSelects(); calculate();
+  };
+}
+
+/* ---------- init ---------- */
+function init(){
+  elSeries = state.elSeries || [];
+  renderSelects(); renderHistory(); renderElChip();
+  loadSettingsForm(); bindSettings();
+  $('currencySel').value = state.settings.currency;
+
+  const live = ['printName','laborMin','shipPost','shipPack','spanStart','spanEnd'];
+  live.forEach(id => $(id).addEventListener('input', calculate));
+  ['printerSel','platformSel'].forEach(id => $(id).addEventListener('change', calculate));
+  $('wageOn').addEventListener('change', () => { $('laborRow').style.opacity = $('wageOn').checked ? 1 : .45; calculate(); });
+  $('shipOn').addEventListener('change', () => { $('shipRow').hidden = !$('shipOn').checked; calculate(); });
+  $('spanOn').addEventListener('change', () => { $('spanRow').hidden = !$('spanOn').checked; calculate(); });
+  $('spanAuto').onclick = () => {
+    const sv = $('spanStart').value;
+    if (!sv){ toast('Vælg et starttidspunkt først', true); return; }
+    const hours = parts.reduce((a, p) => a + p.hours + p.mins / 60, 0);
+    if (hours <= 0){ toast('Udfyld printtid på pladerne først', true); return; }
+    $('spanEnd').value = toLocalInput(new Date(sv).getTime() + hours * 36e5);
+    calculate();
+  };
+  $('marginRange').value = state.settings.margin; $('marginNum').value = state.settings.margin;
+  $('marginRange').addEventListener('input', () => { $('marginNum').value = $('marginRange').value; state.settings.margin = num($('marginRange').value); save(); calculate(); });
+  $('marginNum').addEventListener('input', () => { $('marginRange').value = Math.min(200, num($('marginNum').value)); state.settings.margin = num($('marginNum').value); save(); calculate(); });
+
+  $('currencySel').addEventListener('change', () => {
+    state.settings.currency = $('currencySel').value; save();
+    lastPrice = null; renderHistory(); calculate();
+  });
+
+  $('saveOk').onclick = () => saveToHistory(false);
+  $('saveFail').onclick = () => saveToHistory(true);
+  $('exportCsv').onclick = exportCsv;
+  $('clearHist').onclick = () => {
+    if (confirm('Slet hele historikken? Det kan ikke fortrydes.')){
+      state.history = []; save(); renderHistory(); calculate();
+    }
+  };
+
+  $('openFilaments').onclick = () => { renderFilTable(); $('filamentModal').classList.add('open'); };
+  $('closeFilaments').onclick = () => $('filamentModal').classList.remove('open');
+  $('openSettings').onclick = () => { loadSettingsForm(); renderPrinterTable(); renderPlatformTable(); $('settingsModal').classList.add('open'); };
+  $('closeSettings').onclick = () => $('settingsModal').classList.remove('open');
+  document.querySelectorAll('.modal-bg').forEach(m => m.addEventListener('click', e => { if (e.target === m) m.classList.remove('open'); }));
+
+  $('fetchBambu').onclick = fetchAllBambu;
+  $('addFilament').onclick = () => {
+    const type = $('nfType').value.trim();
+    if (!type){ toast('Giv filamentet en type', true); return; }
+    state.filaments.push({
+      id: uid(), type, brand: $('nfBrand').value.trim() || 'Ukendt',
+      priceDkk: num($('nfPrice').value), spoolG: num($('nfGrams').value) || 1000,
+      slug: $('nfSlug').value.trim(), src: 'manual', updated: null,
+    });
+    $('nfType').value = ''; $('nfBrand').value = ''; $('nfPrice').value = ''; $('nfSlug').value = '';
+    save(); renderFilTable(); renderSelects(); renderParts(); calculate();
+    toast('Filament tilføjet');
+  };
+
+  $('elRefresh').onclick = () => fetchSpot(false);
+  $('addPart').onclick = () => addPart();
+  addPart();
+  fetchFx().then(() => { if (!state.el) fetchSpot(true); });
+  fetchSpot(true);
+}
+init();
+</script>
+</body>
+</html>
