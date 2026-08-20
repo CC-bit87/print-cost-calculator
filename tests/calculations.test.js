@@ -38,7 +38,7 @@ function close(actual, expected, message){
 }
 
 const baseInput = `({
-  parts:[{grams:100,hours:2,filament:{priceDkk:200,spoolG:1000}}],
+  parts:[{hours:2,filaments:[{grams:100,filament:{priceDkk:200,spoolG:1000}}]}],
   wageOn:true,laborMin:15,shipOn:true,shipPost:39,shipPack:8,
   spanOn:false,spanStart:null,spanEnd:null,margin:40,
   printer:{watt:250,cost:8800,lifeHours:5000,hoursAtPurchase:0,used:false},
@@ -64,6 +64,20 @@ run(`
   close(c.wear, 3.52, 'printerslid');
   close(c.spill, (20 + 1 + 3.52) * 0.05 / 0.95, 'forventet fejlreserve');
   close(c.profit, c.cost * 0.40, 'fortjenestetillæg efter platformgebyr');
+}
+
+{
+  const c = run(`compute(Object.assign(${baseInput},{
+    parts:[{hours:2,filaments:[
+      {grams:100,filament:{priceDkk:200,spoolG:1000}},
+      {grams:50,filament:{priceDkk:300,spoolG:1000}}
+    ]}]
+  }))`);
+  close(c.material, 35, 'flere filamenter på samme plade');
+  close(c.totalHours, 2, 'pladens printtid må kun tælles én gang');
+  close(c.electricity, 1, 'strøm må ikke fordobles af flere filamenter');
+  close(c.wear, 3.52, 'printerslid må ikke fordobles af flere filamenter');
+  assert.equal(c.partRows[0].filaments.length, 2, 'filamentfordelingen skal bevares i beregningsresultatet');
 }
 
 {

@@ -57,8 +57,14 @@ input,select{font:inherit;color:var(--ink)}
 .checkboxline{display:flex;align-items:center;gap:9px;font-size:14px;padding:6px 0}
 .checkboxline input{accent-color:var(--green);width:16px;height:16px}
 .subfields{padding-left:25px;margin-top:4px}
-.part{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:10px;background:var(--paper)}
-.part-head{display:flex;justify-content:space-between;align-items:center;font-family:var(--mono);font-size:11.5px;color:var(--muted);margin-bottom:8px;letter-spacing:.05em}
+.part{border:1px solid var(--line);border-radius:8px;padding:12px;margin-bottom:10px;background:var(--paper)}
+.part-head{display:flex;justify-content:space-between;align-items:center;font-family:var(--mono);font-size:11.5px;color:var(--muted);margin-bottom:10px;letter-spacing:.05em}
+.plate-time{display:grid;grid-template-columns:repeat(2,minmax(90px,130px));gap:10px;padding:0 0 11px 39px;border-bottom:1px dashed var(--line)}
+.filament-list{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.filament-row{display:grid;grid-template-columns:29px minmax(190px,2fr) minmax(90px,.7fr) auto;gap:9px;align-items:end}
+.filament-row .field{min-width:0}
+.filament-channel{align-self:center;display:grid;place-items:center;width:26px;height:26px;border:1px solid #9DC7AD;border-radius:50%;background:var(--green-soft);color:var(--green);font-family:var(--mono);font-size:10px;font-weight:600}
+.add-filament{margin:10px 0 0 38px;padding:7px 10px!important;font-size:12px!important}
 
 /* ---------- buttons ---------- */
 .btn{border:1px solid var(--ink);background:var(--ink);color:#fff;border-radius:8px;padding:11px 18px;font-weight:600;font-size:14px}
@@ -144,7 +150,14 @@ td:first-child,th:first-child{font-family:var(--body)}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 .toast.err{background:var(--orange)}
 
-@media(max-width:640px){.wrap{padding:14px}.receipt-wrap{position:static}}
+@media(max-width:640px){
+  .wrap{padding:14px}.receipt-wrap{position:static}
+  .plate-time{grid-template-columns:1fr 1fr;padding-left:0}
+  .filament-row{grid-template-columns:29px minmax(0,1fr) auto;align-items:center}
+  .filament-row .filament-grams{grid-column:2}
+  .filament-row .rowbtn{grid-column:3;grid-row:1 / span 2}
+  .add-filament{margin-left:38px}
+}
 @media(prefers-reduced-motion:reduce){
   .receipt{animation:none}
   .toast{transition:none}
@@ -171,7 +184,7 @@ td:first-child,th:first-child{font-family:var(--body)}
     <div>
       <section class="card">
         <h2><span class="no">01</span> Printdata</h2>
-        <p class="hint-sm">Gram og tid finder du i Bambu Studio efter slicing. Printes produktet i flere dele, så tilføj én plade pr. del.</p>
+        <p class="hint-sm">Gram og tid finder du i Bambu Studio efter slicing. Tilføj flere filamenter på samme plade ved flerfarve-, support- eller multimaterialeprint. Brug slicerens gram inklusive purge og support.</p>
         <div class="row">
           <div class="field" style="flex:2">
             <label for="printName">Navn på produkt</label>
@@ -631,8 +644,24 @@ let parts = [];
 function filOptionsHtml(selId){
   return state.filaments.map(f => `<option value="${f.id}"${f.id===selId?' selected':''}>${esc(f.type)} · ${esc(f.brand)} (${(f.priceDkk/(f.spoolG/1000)).toLocaleString('da-DK',{maximumFractionDigits:0})} kr/kg)</option>`).join('');
 }
+function newPartFilament(excludedIds){
+  const excluded = new Set(excludedIds || []);
+  const filament = state.filaments.find(f => !excluded.has(f.id)) || state.filaments[0];
+  return { id: uid(), filamentId: filament ? filament.id : null, grams: 0 };
+}
+function normalizePart(p){
+  if (!Array.isArray(p.filaments) || !p.filaments.length){
+    p.filaments = [{ id: uid(), filamentId: p.filamentId || (state.filaments[0]||{}).id || null, grams: p.grams || 0 }];
+    delete p.filamentId; delete p.grams;
+  }
+  p.filaments.forEach(m => {
+    if (!m.id) m.id = uid();
+    if (!state.filaments.find(f => f.id === m.filamentId)) m.filamentId = (state.filaments[0]||{}).id || null;
+  });
+  return p;
+}
 function addPart(){
-  parts.push({ id: uid(), filamentId: (state.filaments[0]||{}).id || null, grams: 0, hours: 0, mins: 0 });
+  parts.push({ id: uid(), hours: 0, mins: 0, filaments: [newPartFilament()] });
   renderParts(); calculate();
 }
 function removePart(id){
@@ -640,39 +669,67 @@ function removePart(id){
   parts = parts.filter(p => p.id !== id);
   renderParts(); calculate();
 }
+function addPartFilament(partId){
+  const p = parts.find(x => x.id === partId);
+  if (!p) return;
+  normalizePart(p);
+  p.filaments.push(newPartFilament(p.filaments.map(m => m.filamentId)));
+  renderParts(); calculate();
+}
+function removePartFilament(partId, materialId){
+  const p = parts.find(x => x.id === partId);
+  if (!p || p.filaments.length <= 1) return;
+  p.filaments = p.filaments.filter(m => m.id !== materialId);
+  renderParts(); calculate();
+}
 function renderParts(){
   const list = $('partsList');
   list.innerHTML = '';
   parts.forEach((p, i) => {
-    if (!state.filaments.find(f => f.id === p.filamentId)) p.filamentId = (state.filaments[0]||{}).id || null;
+    normalizePart(p);
     const div = document.createElement('div');
     div.className = 'part';
+    const filamentRows = p.filaments.map((m, j) =>
+      `<div class="filament-row" data-material="${m.id}">` +
+        `<span class="filament-channel" title="Filament ${j+1}">F${j+1}</span>` +
+        `<div class="field"><label>Filament</label><select class="p-fil">${filOptionsHtml(m.filamentId)}</select></div>` +
+        `<div class="field filament-grams"><label>Gram inkl. spild</label><input class="p-grams" type="number" min="0" step="1" value="${m.grams||''}" placeholder="0"></div>` +
+        `${p.filaments.length>1?'<button class="rowbtn remove-filament" type="button">fjern</button>':''}` +
+      `</div>`
+    ).join('');
     div.innerHTML =
-      `<div class="part-head"><span>PLADE ${i+1}</span>${parts.length>1?'<button class="rowbtn" type="button">fjern</button>':''}</div>` +
-      `<div class="row">` +
-      `<div class="field" style="flex:2"><label>Filament</label><select class="p-fil">${filOptionsHtml(p.filamentId)}</select></div>` +
-      `<div class="field"><label>Gram</label><input class="p-grams" type="number" min="0" step="1" value="${p.grams||''}" placeholder="0"></div>` +
-      `<div class="field"><label>Timer</label><input class="p-hours" type="number" min="0" step="1" value="${p.hours||''}" placeholder="0"></div>` +
-      `<div class="field"><label>Min</label><input class="p-mins" type="number" min="0" max="59" step="1" value="${p.mins||''}" placeholder="0"></div>` +
-      `</div>`;
-    const filSel = div.querySelector('.p-fil');
-    filSel.onchange = () => { p.filamentId = filSel.value; calculate(); };
-    const g = div.querySelector('.p-grams'), hIn = div.querySelector('.p-hours'), m = div.querySelector('.p-mins');
-    g.oninput = () => { p.grams = num(g.value); updatePartsTotal(); calculate(); };
+      `<div class="part-head"><span>PLADE ${i+1}</span>${parts.length>1?'<button class="rowbtn" type="button" data-remove-part>fjern plade</button>':''}</div>` +
+      `<div class="plate-time">` +
+        `<div class="field"><label>Printtimer</label><input class="p-hours" type="number" min="0" step="1" value="${p.hours||''}" placeholder="0"></div>` +
+        `<div class="field"><label>Printminutter</label><input class="p-mins" type="number" min="0" max="59" step="1" value="${p.mins||''}" placeholder="0"></div>` +
+      `</div>` +
+      `<div class="filament-list">${filamentRows}</div>` +
+      `<button class="btn ghost add-filament" type="button">＋ Tilføj filament på pladen</button>`;
+    const hIn = div.querySelector('.p-hours'), minsIn = div.querySelector('.p-mins');
     hIn.oninput = () => { p.hours = num(hIn.value); updatePartsTotal(); calculate(); };
-    m.oninput = () => { p.mins = num(m.value); updatePartsTotal(); calculate(); };
-    const rm = div.querySelector('.rowbtn');
-    if (rm) rm.onclick = () => removePart(p.id);
+    minsIn.oninput = () => { p.mins = num(minsIn.value); updatePartsTotal(); calculate(); };
+    div.querySelectorAll('.filament-row').forEach(row => {
+      const material = p.filaments.find(m => m.id === row.dataset.material);
+      const filSel = row.querySelector('.p-fil'), gramsIn = row.querySelector('.p-grams');
+      filSel.onchange = () => { material.filamentId = filSel.value; calculate(); };
+      gramsIn.oninput = () => { material.grams = num(gramsIn.value); updatePartsTotal(); calculate(); };
+      const removeFilament = row.querySelector('.remove-filament');
+      if (removeFilament) removeFilament.onclick = () => removePartFilament(p.id, material.id);
+    });
+    const removePlate = div.querySelector('[data-remove-part]');
+    if (removePlate) removePlate.onclick = () => removePart(p.id);
+    div.querySelector('.add-filament').onclick = () => addPartFilament(p.id);
     list.appendChild(div);
   });
   updatePartsTotal();
 }
 function updatePartsTotal(){
-  const grams = parts.reduce((a,p)=>a+p.grams,0);
+  const grams = parts.reduce((a,p)=>a+normalizePart(p).filaments.reduce((sum,m)=>sum+m.grams,0),0);
   const hours = parts.reduce((a,p)=>a+p.hours+p.mins/60,0);
+  const filamentLines = parts.reduce((a,p)=>a+normalizePart(p).filaments.length,0);
   const hh = Math.floor(hours), mm = Math.round((hours-hh)*60);
   $('partsTotal').textContent = (grams || hours)
-    ? `I alt: ${grams.toLocaleString('da-DK')} g · ${hh} t ${mm} min på ${parts.length} plade${parts.length>1?'r':''}`
+    ? `I alt: ${grams.toLocaleString('da-DK')} g · ${hh} t ${mm} min · ${filamentLines} filament${filamentLines>1?'er':''} på ${parts.length} plade${parts.length>1?'r':''}`
     : '';
 }
 
@@ -704,9 +761,11 @@ function getInputs(){
   return {
     name: $('printName').value.trim(),
     parts: parts.map(p => ({
-      grams: p.grams,
       hours: p.hours + p.mins / 60,
-      filament: state.filaments.find(f => f.id === p.filamentId) || state.filaments[0],
+      filaments: normalizePart(p).filaments.map(m => ({
+        grams: m.grams,
+        filament: state.filaments.find(f => f.id === m.filamentId) || state.filaments[0],
+      })),
     })),
     wageOn: $('wageOn').checked,
     laborMin: num($('laborMin').value),
@@ -721,12 +780,23 @@ function getInputs(){
     platform: state.platforms.find(p => p.id === $('platformSel').value) || state.platforms[0],
   };
 }
+function inputFilamentRows(inp){
+  return inp.parts.flatMap(p => Array.isArray(p.filaments) ? p.filaments : [{ grams: p.grams || 0, filament: p.filament }]);
+}
 function compute(inp){
   const s = state.settings;
   const fr = failRate();
   const inputError = printerInputError(inp.printer);
   const kgPrice = f => f ? f.priceDkk / (f.spoolG / 1000) : 0;
-  const partRows = inp.parts.map(p => Object.assign({}, p, { cost: p.grams / 1000 * kgPrice(p.filament) }));
+  const partRows = inp.parts.map(p => {
+    const sourceFilaments = Array.isArray(p.filaments) ? p.filaments : [{ grams: p.grams || 0, filament: p.filament }];
+    const filaments = sourceFilaments.map(m => Object.assign({}, m, { cost: m.grams / 1000 * kgPrice(m.filament) }));
+    return Object.assign({}, p, {
+      filaments,
+      grams: filaments.reduce((a, m) => a + m.grams, 0),
+      cost: filaments.reduce((a, m) => a + m.cost, 0),
+    });
+  });
   const material = partRows.reduce((a, p) => a + p.cost, 0);
   const totalHours = inp.parts.reduce((a, p) => a + p.hours, 0);
   const watt = inp.printer ? inp.printer.watt : 0;
@@ -781,16 +851,23 @@ function calculate(){
   if (!state.filaments.length || !inp.printer){ $('receiptLines').innerHTML = '<p class="empty">Tilføj et filament og en printer for at starte.</p>'; return; }
   const c = compute(inp);
   const now = new Date();
-  const types = [...new Set(inp.parts.map(p => p.filament && p.filament.type).filter(Boolean))];
+  const types = [...new Set(inputFilamentRows(inp).map(m => m.filament && m.filament.type).filter(Boolean))];
   $('receiptMeta').textContent =
     `${now.toLocaleDateString('da-DK')} · ${esc(types.join(' + ') || '–')} · ${esc(inp.printer.name)}`;
 
   let h = '';
-  if (c.partRows.length === 1){
-    const p = c.partRows[0];
-    h += line(`Materiale · ${p.grams} g ${esc(p.filament ? p.filament.type : '')}`, fmt(p.cost));
+  const materialRows = c.partRows.flatMap((p, plateIndex) => p.filaments.map((m, filamentIndex) => ({
+    plateIndex, filamentIndex, filamentCount: p.filaments.length, material: m,
+  })));
+  if (materialRows.length === 1){
+    const m = materialRows[0].material;
+    h += line(`Materiale · ${m.grams} g ${esc(m.filament ? m.filament.type : '')}`, fmt(m.cost));
   } else {
-    c.partRows.forEach((p, i) => { h += line(`Plade ${i+1} · ${esc(p.filament ? p.filament.type : '–')} · ${p.grams} g`, fmt(p.cost)); });
+    materialRows.forEach(row => {
+      const m = row.material;
+      const channel = row.filamentCount > 1 ? ` · F${row.filamentIndex+1}` : '';
+      h += line(`Plade ${row.plateIndex+1}${channel} · ${esc(m.filament ? m.filament.type : '–')} · ${m.grams} g`, fmt(m.cost));
+    });
   }
   if (c.elSpan && inp.spanOn){
     const t = ms => new Date(ms).toLocaleTimeString('da-DK', { hour: '2-digit', minute: '2-digit' });
@@ -872,17 +949,24 @@ function renderMarginHints(inp, c){
 function saveToHistory(failed){
   const inp = getInputs();
   const c = compute(inp);
-  const totalGrams = inp.parts.reduce((a, p) => a + p.grams, 0);
+  const totalGrams = inputFilamentRows(inp).reduce((a, m) => a + m.grams, 0);
   if (totalGrams <= 0 && c.totalHours <= 0){ toast('Udfyld gram og tid før du gemmer', true); return; }
   if (c.inputError){ toast(c.inputError, true); return; }
   if (!failed && c.pricingError){ toast(c.pricingError, true); return; }
-  const types = [...new Set(inp.parts.map(p => p.filament && p.filament.type).filter(Boolean))];
+  const types = [...new Set(inputFilamentRows(inp).map(m => m.filament && m.filament.type).filter(Boolean))];
   const historyCost = failed ? c.failedCost : c.cost;
   state.history.unshift({
     id: uid(), date: new Date().toISOString(), name: inp.name || '(uden navn)',
     grams: totalGrams, hours: c.totalHours,
     filament: types.join(' + ') || '–', printer: inp.printer.name,
-    parts: inp.parts.map(p => ({ type: p.filament ? p.filament.type : '?', grams: p.grams, hours: Math.round(p.hours * 100) / 100 })),
+    parts: inp.parts.map(p => ({
+      hours: Math.round(p.hours * 100) / 100,
+      filaments: p.filaments.map(m => ({
+        type: m.filament ? m.filament.type : '?',
+        brand: m.filament ? m.filament.brand : '?',
+        grams: m.grams,
+      })),
+    })),
     cost: historyCost, price: failed ? 0 : c.price, fee: failed ? 0 : c.feeAmt,
     salesVat: failed ? 0 : c.salesVat,
     profit: failed ? -historyCost : c.profit, failed: !!failed,
