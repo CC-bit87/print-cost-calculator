@@ -336,17 +336,20 @@ td:first-child,th:first-child{font-family:var(--body)}
     <p class="sub">Gemmes automatisk i browseren på denne computer.</p>
 
     <h3>Printere</h3>
+    <p class="hint-sm" style="margin-top:0">Slid pr. printtime = købspris ÷ restlevetid (levetid i alt minus timer ved køb). Er printeren købt brugt, så tast hvad du gav for den, og hvor mange timer den havde kørt.</p>
     <div style="overflow-x:auto">
       <table id="printerTable">
-        <thead><tr><th>Navn</th><th>Forbrug (W)</th><th>Købspris (kr)</th><th>Levetid (timer)</th><th>Slid kr/t</th><th></th></tr></thead>
+        <thead><tr><th>Navn</th><th>Forbrug (W)</th><th>Tilstand</th><th>Købt for (kr)</th><th>Timer ved køb</th><th>Levetid i alt (t)</th><th>Slid kr/t</th><th>Kørt via appen</th><th></th></tr></thead>
         <tbody></tbody>
       </table>
     </div>
     <div class="row" style="margin-top:10px">
       <div class="field"><label>Navn</label><input id="npName" type="text" placeholder="f.eks. Bambu Lab P1S"></div>
       <div class="field"><label>Forbrug (W)</label><input id="npWatt" type="number" min="0" step="10" value="250"></div>
-      <div class="field"><label>Købspris (kr)</label><input id="npCost" type="number" min="0" step="100"></div>
-      <div class="field"><label>Levetid (timer)</label><input id="npLife" type="number" min="1" step="100" value="5000"></div>
+      <div class="field"><label>Tilstand</label><select id="npUsed"><option value="no">Ny</option><option value="yes">Brugt</option></select></div>
+      <div class="field"><label>Købt for (kr)</label><input id="npCost" type="number" min="0" step="100"></div>
+      <div class="field"><label>Timer ved køb (0 hvis ny)</label><input id="npHours" type="number" min="0" step="10" value="0"></div>
+      <div class="field"><label>Levetid i alt (t)</label><input id="npLife" type="number" min="1" step="100" value="5000"></div>
       <div class="field" style="flex:0 0 auto;justify-content:flex-end"><label>&nbsp;</label><button class="btn" id="addPrinter" type="button">Tilføj</button></div>
     </div>
 
@@ -432,7 +435,7 @@ function uid(){ return Math.random().toString(36).slice(2,10); }
 function seed(){
   return {
     filaments: SEED_FILAMENTS,
-    printers: [{ id: uid(), name: 'Bambu Lab X2D', watt: 250, cost: 8800, lifeHours: 5000 }],
+    printers: [{ id: uid(), name: 'Bambu Lab X2D', watt: 250, used: false, hoursAtPurchase: 0, cost: 8800, lifeHours: 5000 }],
     platforms: [
       { id: uid(), name: 'Facebook Marketplace', fee: 0 },
       { id: uid(), name: 'DBA', fee: 0 },
@@ -459,6 +462,8 @@ state.settings = Object.assign(seed().settings, state.settings); // udfyld nye n
 state.printers.forEach(p => { if (p.name === 'Bambu Lab X2D' && p.watt === 200) p.watt = 250; });
 // engangs-migrering: gamle el-data (Energinet-format, DKK/MWh) ryddes – ny kilde bruger kr/kWh
 if (state.el && state.el.spotKrh === undefined){ state.el = null; state.elSeries = []; }
+// engangs-migrering: printere får tilstand (ny/brugt) og timer ved køb
+state.printers.forEach(p => { if (p.used === undefined){ p.used = false; p.hoursAtPurchase = 0; } });
 save();
 function save(){ localStorage.setItem(LS_KEY, JSON.stringify(state)); }
 
@@ -641,6 +646,8 @@ function updatePartsTotal(){
 }
 
 /* ---------- beregning ---------- */
+// Slid-takst: købspris fordelt på restlevetiden (ved brugtkøb fratrækkes timer ved køb)
+function wearRate(p){ return p.cost / Math.max(1, (p.lifeHours || 1) - (p.hoursAtPurchase || 0)); }
 function getInputs(){
   return {
     name: $('printName').value.trim(),
@@ -685,7 +692,7 @@ function compute(inp){
     }
   }
   const spill = (material + electricity) * fr;
-  const wear = inp.printer ? totalHours * (inp.printer.cost / inp.printer.lifeHours) : 0;
+  const wear = inp.printer ? totalHours * wearRate(inp.printer) : 0;
   const labor = inp.wageOn ? (inp.laborMin / 60) * s.wage : 0;
   const ship = inp.shipOn ? inp.shipPost + inp.shipPack : 0;
   const cost = material + electricity + spill + wear + labor + ship;
@@ -928,20 +935,26 @@ function renderPrinterTable(){
   const tb = $('printerTable').querySelector('tbody');
   tb.innerHTML = '';
   for (const p of state.printers){
+    const runHours = state.history.reduce((a, h) => a + (h.printer === p.name ? (h.hours || 0) : 0), 0);
     const tr = document.createElement('tr');
     tr.innerHTML =
       `<td><input value="${esc(p.name)}" data-p="${p.id}" data-k="name"></td>` +
-      `<td style="width:90px"><input type="number" min="0" step="10" value="${p.watt}" data-p="${p.id}" data-k="watt"></td>` +
-      `<td style="width:100px"><input type="number" min="0" step="100" value="${p.cost}" data-p="${p.id}" data-k="cost"></td>` +
+      `<td style="width:80px"><input type="number" min="0" step="10" value="${p.watt}" data-p="${p.id}" data-k="watt"></td>` +
+      `<td><select data-p="${p.id}" data-k="used"><option value="no"${p.used ? '' : ' selected'}>Ny</option><option value="yes"${p.used ? ' selected' : ''}>Brugt</option></select></td>` +
+      `<td style="width:90px"><input type="number" min="0" step="100" value="${p.cost}" data-p="${p.id}" data-k="cost"></td>` +
+      `<td style="width:90px"><input type="number" min="0" step="10" value="${p.hoursAtPurchase || 0}" data-p="${p.id}" data-k="hoursAtPurchase"></td>` +
       `<td style="width:100px"><input type="number" min="1" step="100" value="${p.lifeHours}" data-p="${p.id}" data-k="lifeHours"></td>` +
-      `<td>${(p.cost/p.lifeHours).toLocaleString('da-DK',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>` +
+      `<td>${wearRate(p).toLocaleString('da-DK',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>` +
+      `<td>${runHours.toLocaleString('da-DK',{maximumFractionDigits:1})} t</td>` +
       `<td><button class="rowbtn" data-del="${p.id}">slet</button></td>`;
     tb.appendChild(tr);
   }
-  tb.querySelectorAll('input').forEach(i => i.onchange = () => {
+  tb.querySelectorAll('input,select').forEach(i => i.onchange = () => {
     const p = state.printers.find(x => x.id === i.dataset.p);
     if (!p) return;
-    p[i.dataset.k] = i.dataset.k === 'name' ? i.value : num(i.value);
+    if (i.dataset.k === 'name') p.name = i.value;
+    else if (i.dataset.k === 'used') p.used = i.value === 'yes';
+    else p[i.dataset.k] = num(i.value);
     save(); renderPrinterTable(); renderSelects(); calculate();
   });
   tb.querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
@@ -1001,8 +1014,13 @@ function bindSettings(){
   $('addPrinter').onclick = () => {
     const name = $('npName').value.trim();
     if (!name){ toast('Giv printeren et navn', true); return; }
-    state.printers.push({ id: uid(), name, watt: num($('npWatt').value) || 200, cost: num($('npCost').value), lifeHours: num($('npLife').value) || 5000 });
-    $('npName').value = ''; $('npCost').value = '';
+    const used = $('npUsed').value === 'yes';
+    state.printers.push({
+      id: uid(), name, watt: num($('npWatt').value) || 250, used,
+      hoursAtPurchase: used ? num($('npHours').value) : 0,
+      cost: num($('npCost').value), lifeHours: num($('npLife').value) || 5000,
+    });
+    $('npName').value = ''; $('npCost').value = ''; $('npHours').value = 0; $('npUsed').value = 'no';
     save(); renderPrinterTable(); renderSelects(); calculate();
   };
   $('addPlatform').onclick = () => {
