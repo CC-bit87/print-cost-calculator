@@ -351,7 +351,7 @@ td:first-child,th:first-child{font-family:var(--body)}
     </div>
 
     <h3>El-pris</h3>
-    <p class="hint-sm" style="margin-top:0">Spotprisen hentes fra Energinet (Nord Pool day-ahead). Tillægget dækker transport og afgifter – sammenlign med din Clever-regning og justér, så det matcher.</p>
+    <p class="hint-sm" style="margin-top:0">Spotprisen hentes time for time fra elprisenligenu.dk (Nord Pool day-ahead). Tillægget dækker transport og afgifter – sammenlign med din Clever-regning og justér, så det matcher.</p>
     <div class="row">
       <div class="field">
         <label for="areaSel">Prisområde</label>
@@ -457,6 +457,8 @@ if (!state.settings) state = seed();
 state.settings = Object.assign(seed().settings, state.settings); // udfyld nye nøgler med standarder
 // engangs-migrering: X2D-forbrug rettet til officiel steady-state værdi (PLA)
 state.printers.forEach(p => { if (p.name === 'Bambu Lab X2D' && p.watt === 200) p.watt = 250; });
+// engangs-migrering: gamle el-data (Energinet-format, DKK/MWh) ryddes – ny kilde bruger kr/kWh
+if (state.el && state.el.spotKrh === undefined){ state.el = null; state.elSeries = []; }
 save();
 function save(){ localStorage.setItem(LS_KEY, JSON.stringify(state)); }
 
@@ -482,42 +484,37 @@ function toast(msg, isErr){
 }
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-/* ---------- el-pris (Energinet DayAheadPrices) ---------- */
-let elSeries = []; // [{t: ms (UTC), p: DKK/MWh}] – dækker i dag + i morgen
+/* ---------- el-pris (elprisenligenu.dk – Nord Pool day-ahead spotpriser, kr/kWh) ---------- */
+let elSeries = []; // [{t: ms, tEnd: ms, p: kr/kWh spot}] – dækker i dag (+ i morgen efter ca. kl. 13)
 function elTotalKrh(){
   const s = state.settings;
   if (s.manualElOn) return { price: s.manualElPrice, label: 'manuel' };
   if (!state.el) return { price: s.manualElPrice, label: 'ukendt (manuel standard)' };
-  const spot = state.el.spotDkkMwh / 1000;
-  const p = (spot + s.tillæg) * (s.vat ? 1.25 : 1);
+  const p = (state.el.spotKrh + s.tillæg) * (s.vat ? 1.25 : 1);
   return { price: p, label: null };
 }
 async function fetchSpot(silent){
   const s = state.settings;
   const pad = n => String(n).padStart(2,'0');
-  const d = new Date();
-  const start = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T00:00`;
-  const end = new Date(d.getTime() + 2*864e5);
-  const endS = `${end.getFullYear()}-${pad(end.getMonth()+1)}-${pad(end.getDate())}T00:00`;
-  const url = 'https://api.energidataservice.dk/dataset/DayAheadPrices'
-    + `?start=${encodeURIComponent(start)}&end=${encodeURIComponent(endS)}`
-    + `&filter=${encodeURIComponent(JSON.stringify({ PriceArea: [s.area] }))}`
-    + '&sort=TimeUTC ASC&limit=200';
+  const dayUrl = d => `https://www.elprisenligenu.dk/api/v1/prices/${d.getFullYear()}/${pad(d.getMonth()+1)}-${pad(d.getDate())}_${s.area}.json`;
   try {
-    const r = await fetch(url);
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    const data = await r.json();
-    const recs = data.records || [];
+    const recs = [];
+    const today = new Date();
+    for (const d of [today, new Date(today.getTime() + 864e5)]){
+      const r = await fetch(dayUrl(d));
+      if (r.status === 404) continue; // morgendagens priser er ikke offentliggjort endnu
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const arr = await r.json();
+      for (const x of arr) recs.push({ t: Date.parse(x.time_start), tEnd: Date.parse(x.time_end), p: x.DKK_per_kWh });
+    }
+    if (!recs.length) throw new Error('Ingen priser modtaget');
+    recs.sort((a, b) => a.t - b.t);
     const now = Date.now();
     let current = null;
-    for (const rec of recs){
-      const t = new Date(rec.TimeUTC + 'Z').getTime();
-      if (t <= now) current = rec; else break;
-    }
-    if (!current) current = recs[recs.length - 1];
-    if (!current) throw new Error('Ingen priser modtaget');
-    state.el = { spotDkkMwh: current.DayAheadPriceDKK, slotDK: current.TimeDK, fetchedAt: new Date().toISOString(), area: s.area };
-    elSeries = recs.map(r => ({ t: new Date(r.TimeUTC + 'Z').getTime(), p: r.DayAheadPriceDKK }));
+    for (const rec of recs){ if (rec.t <= now) current = rec; else break; }
+    if (!current) current = recs[0];
+    state.el = { spotKrh: current.p, slotStart: current.t, slotEnd: current.tEnd, fetchedAt: new Date().toISOString(), area: s.area };
+    elSeries = recs;
     state.elSeries = elSeries;
     save(); renderElChip(); calculate();
   } catch(e){
@@ -533,7 +530,7 @@ function renderElChip(stale){
   }
   const { price } = elTotalKrh();
   if (state.el){
-    const slot = state.el.slotDK ? state.el.slotDK.slice(11,16) : '';
+    const slot = state.el.slotStart != null ? new Date(state.el.slotStart).toLocaleTimeString('da-DK', { hour: '2-digit', minute: '2-digit' }) : '';
     txt.textContent = `Strøm: ${price.toLocaleString('da-DK',{minimumFractionDigits:2,maximumFractionDigits:2})} kr/kWh · ${state.el.area} kl. ${slot}`;
   } else {
     txt.textContent = `Strøm: ${price.toLocaleString('da-DK',{minimumFractionDigits:2})} kr/kWh (standard – klik Opdatér)`;
@@ -545,14 +542,13 @@ function renderElChip(stale){
    Timer uden offentliggjort pris bruger gennemsnittet af de kendte timer. */
 function spanElCost(watt, startMs, endMs){
   const s = state.settings;
-  const step = 15 * 60 * 1000;
   const kwh = (watt / 1000) * ((endMs - startMs) / 36e5);
   if (!elSeries.length) return null;
   let cost = 0, coveredMs = 0, priceSum = 0, priceN = 0;
   for (const rec of elSeries){
-    const a = Math.max(rec.t, startMs), b = Math.min(rec.t + step, endMs);
+    const a = Math.max(rec.t, startMs), b = Math.min(rec.tEnd, endMs);
     if (b <= a) continue;
-    const krKwh = (rec.p / 1000 + s.tillæg) * (s.vat ? 1.25 : 1);
+    const krKwh = (rec.p + s.tillæg) * (s.vat ? 1.25 : 1);
     cost += (watt / 1000) * ((b - a) / 36e5) * krKwh;
     coveredMs += b - a; priceSum += krKwh; priceN++;
   }
@@ -1082,6 +1078,7 @@ function init(){
   addPart();
   fetchFx().then(() => { if (!state.el) fetchSpot(true); });
   fetchSpot(true);
+  setInterval(() => fetchSpot(true), 15 * 60 * 1000); // hold prisen frisk mens siden er åben
 }
 init();
 </script>
